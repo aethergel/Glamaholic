@@ -1,7 +1,9 @@
-﻿using Dalamud.Plugin;
+﻿using Dalamud.Game.Command;
+using Dalamud.Plugin;
 using Glamourer.Api.Enums;
 using Glamourer.Api.IpcSubscribers;
 using System;
+using System.Threading.Tasks;
 
 namespace Glamaholic.Interop {
     internal class Glamourer {
@@ -50,6 +52,30 @@ namespace Glamaholic.Interop {
             }
         }
 
+        private static void TryOnCommand(string _, string args) {
+            if (!IsAvailable())
+                return;
+
+            string url = args.Trim();
+            if (url.Length == 0 || !EorzeaCollection.IsEorzeaCollectionURL(url)) {
+                url = Util.GetClipboardText();
+                if (url.Length == 0 || !EorzeaCollection.IsEorzeaCollectionURL(url)) {
+                    Service.ChatGui.PrintError("[Glamaholic] No valid Eorzea Collection URL provided or found in clipboard");
+                    return;
+                }
+            }
+
+            Task.Run(async () => {
+                var import = await EorzeaCollection.ImportFromURL(url);
+                if (import == null) {
+                    Service.ChatGui.PrintError("[Glamaholic] Failed to import glamour from Eorzea Collection URL, check /xllog for more information.");
+                    return;
+                }
+
+                TryOn(0, import);
+            });
+        }
+
         public static void Initialize(IDalamudPluginInterface pluginInterface) {
             if (Initialized)
                 return;
@@ -59,10 +85,12 @@ namespace Glamaholic.Interop {
 
             Initialized = true;
 
-            CheckIfAvailable(pluginInterface);
+            RefreshStatus(pluginInterface);
         }
 
-        public static void CheckIfAvailable(IDalamudPluginInterface pluginInterface) {
+        public static void RefreshStatus(IDalamudPluginInterface pluginInterface) {
+            var prev = Available;
+
             Available = false;
 
             foreach (var plugin in pluginInterface.InstalledPlugins) {
@@ -71,6 +99,21 @@ namespace Glamaholic.Interop {
                     break;
                 }
             }
+
+            if (prev == Available)
+                return;
+
+            // per PAC guidelines, this command must only show up if the user has Glamourer loaded already
+            if (Available) {
+                Service.CommandManager.AddHandler("/tryonglamourer", new CommandInfo(TryOnCommand) { 
+                    ShowInHelp = true,
+                    HelpMessage = "Try on an EC glamour using Glamourer, link can be provided in the command or in the clipboard"
+                });
+
+                return;
+            }
+
+            Service.CommandManager.RemoveHandler("/tryonglamourer");
         }
 
         public static bool IsAvailable() {

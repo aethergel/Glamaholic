@@ -68,8 +68,10 @@ namespace Glamaholic.Interop {
                     if (name.Length == 0)
                         continue;
 
+                    // Some items use NBSP (\xA0) instead of space (\x20) for some reason.
                     var item = itemSheet.FirstOrNull(i => i.Name.ExtractText().ToLower() == name);
-                    if (item == null) {
+                    if (item == null
+                        && (item = itemSheet.FirstOrNull(i => i.Name.ExtractText().ToLower() == name.Replace("\x20", "\xA0"))) == null) {
                         Service.Log.Warning($"EorzeaCollection Import: Item '{name}' not found in Item sheet");
                         continue;
                     }
@@ -107,6 +109,10 @@ namespace Glamaholic.Interop {
                 Service.Log.Warning($"EorzeaCollection Import: Failed to parse response: {e.Message}");
                 return null;
             }
+        }
+
+        public static bool IsEorzeaCollectionURL(string url) {
+            return ConvertURLForAPI(url) != null;
         }
 
         private static string? ConvertURLForAPI(string userFacingURL) {

@@ -33,7 +33,7 @@ namespace Glamaholic {
             if (now.Subtract(LastInteropCheckTime).TotalSeconds < 5)
                 return;
 
-            Interop.Glamourer.CheckIfAvailable(Service.Interface);
+            Interop.Glamourer.RefreshStatus(Service.Interface);
 
             LastInteropCheckTime = now;
         }
