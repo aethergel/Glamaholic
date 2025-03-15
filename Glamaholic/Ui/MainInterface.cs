@@ -1007,8 +1007,6 @@ namespace Glamaholic.Ui {
             ImGui.SameLine();
 
             this.DrawPlateDetail();
-
-            ImGui.End();
         }
 
         private void DrawMassImportWindow() {
