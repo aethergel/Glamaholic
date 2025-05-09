@@ -633,6 +633,8 @@ namespace Glamaholic.Ui {
                             if (item.DyeCount == 2)
                                 ImGui.GetWindowDrawList().AddCircle(circleCentre, 5, 0xFF000000);
                         }
+
+                        tooltip += "\n\n* Left click to copy name to clipboard";
                     }
                 }
             } else if (mirage != null) {
@@ -659,6 +661,14 @@ namespace Glamaholic.Ui {
                 ImGui.BeginTooltip();
                 ImGui.TextUnformatted(tooltip);
                 ImGui.EndTooltip();
+            }
+
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !this._editing) {
+                if (Service.DataManager.GetExcelSheet<Item>()!.TryGetRow(mirage!.ItemId, out var item)) {
+                    string name = item.Name.ExtractText();
+                    ImGui.SetClipboardText(name);
+                    Service.ChatGui.Print($"Copied '{name}' to clipboard.");
+                }
             }
 
             var itemPopup = $"plate item edit {slot}";
