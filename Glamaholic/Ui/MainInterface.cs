@@ -1062,6 +1062,8 @@ namespace Glamaholic.Ui {
         }
 
         private void HandleTimers() {
+            if (this._timedMessages.Count == 0) return;
+            
             var keys = this._timedMessages.Keys.ToArray();
             foreach (var key in keys) {
                 if (this._timedMessages[key].Elapsed > TimeSpan.FromSeconds(5)) {
