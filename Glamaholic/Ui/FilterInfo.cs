@@ -1,4 +1,4 @@
-﻿using Dalamud.Game;
+using Dalamud.Game;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
@@ -198,7 +198,7 @@ namespace Glamaholic.Ui {
             }
 
             foreach (var mirage in plate.Items.Values) {
-                if (this.Data.GetExcelSheet<Item>()!.TryGetRow(mirage.ItemId % Util.HqItemOffset, out var item)) {
+                if (!this.Data.GetExcelSheet<Item>()!.TryGetRow(mirage.ItemId % Util.HqItemOffset, out var item)) {
                     continue;
                 }
 
