@@ -1,9 +1,10 @@
-﻿using Dalamud.Game;
+using Dalamud.Game;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 
@@ -17,14 +18,14 @@ namespace Glamaholic.Interop {
         private static bool HasLoggedError { get; set; } = false;
 
         public static async Task<SavedPlate?> ImportFromURL(string userFacingURL) {
+            var items = DataCache.EquippableItems.Value;
+            var stains = DataCache.StainLookup.Value;
+
             string? url = ConvertURLForAPI(userFacingURL);
             if (url == null) {
                 Service.Log.Error($"EorzeaCollection Import: Invalid URL '{userFacingURL}'");
                 return null;
             }
-
-            var itemSheet = Service.DataManager.GetExcelSheet<Item>(ClientLanguage.English)!;
-            var stainSheet = Service.DataManager.GetExcelSheet<Stain>(ClientLanguage.English)!;
 
             using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Add("User-Agent", USER_AGENT);
@@ -69,9 +70,9 @@ namespace Glamaholic.Interop {
                         continue;
 
                     // Some items use NBSP (\xA0) instead of space (\x20) for some reason.
-                    var item = itemSheet.FirstOrNull(i => i.Name.ExtractText().ToLower() == name);
+                    var item = items.FirstOrNull(i => i.Name.ExtractText().ToLower() == name);
                     if (item == null
-                        && (item = itemSheet.FirstOrNull(i => i.Name.ExtractText().ToLower() == name.Replace("\x20", "\xA0"))) == null) {
+                        && (item = items.FirstOrNull(i => i.Name.ExtractText().ToLower() == name.Replace("\x20", "\xA0"))) == null) {
                         Service.Log.Warning($"EorzeaCollection Import: Item '{name}' not found in Item sheet");
                         continue;
                     }
@@ -84,21 +85,15 @@ namespace Glamaholic.Interop {
                     byte stain1, stain2 = stain1 = 0;
 
                     if (dyes[0] != "none") {
-                        var stain = stainSheet.FirstOrNull(s => s.Name.ExtractText().ToLower() == dyes[0]);
-
-                        if (stain != null) {
-                            stain1 = (byte) stain.Value.RowId;
-                        } else
+                        if (!stains.TryGetValue(dyes[0], out stain1)) {
                             Service.Log.Warning($"EorzeaCollection Import: Stain '{dyes[0]}' not found in Stain sheet");
+                        }   
                     }
 
                     if (dyes.Length > 1 && dyes[1] != "none") {
-                        var stain = stainSheet.FirstOrNull(s => s.Name.ExtractText().ToLower() == dyes[1]);
-
-                        if (stain != null) {
-                            stain2 = (byte) stain.Value.RowId;
-                        } else
+                        if (!stains.TryGetValue(dyes[1], out stain2)) {
                             Service.Log.Warning($"EorzeaCollection Import: Stain '{dyes[1]}' not found in Stain sheet");
+                        }
                     }
 
                     plate.Items.Add(plateSlot.Value, new SavedGlamourItem() { ItemId = item.Value.RowId, Stain1 = stain1, Stain2 = stain2 });

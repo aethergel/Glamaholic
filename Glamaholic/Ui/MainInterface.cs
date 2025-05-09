@@ -5,9 +5,11 @@ using Dalamud.Interface.Utility;
 using Glamaholic.Interop;
 using ImGuiNET;
 using Lumina.Excel.Sheets;
+using Lumina.Extensions;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
@@ -37,9 +39,7 @@ namespace Glamaholic.Ui {
         };
 
         private PluginUi Ui { get; }
-        private List<Item> Items { get; }
-        private List<Item> FilteredItems { get; set; }
-        private Dictionary<string, byte> Stains { get; }
+        private ImmutableList<Item> FilteredItems { get; set; }
 
         private FilterInfo? PlateFilter { get; set; }
 
@@ -67,17 +67,6 @@ namespace Glamaholic.Ui {
 
         internal MainInterface(PluginUi ui) {
             this.Ui = ui;
-
-            // get all equippable items that aren't soul crystals
-            this.Items = Service.DataManager.GetExcelSheet<Item>(ClientLanguage.English)!
-                .Where(row => row.EquipSlotCategory.RowId is not 0 && row.EquipSlotCategory.Value!.SoulCrystal == 0)
-                .ToList();
-            this.FilteredItems = this.Items;
-
-            this.Stains = Service.DataManager.GetExcelSheet<Stain>(ClientLanguage.English)!
-                .Where(row => row.RowId != 0)
-                .Where(row => !row.Name.IsEmpty)
-                .ToDictionary(row => row.Name.ExtractText(), row => (byte) row.RowId);
         }
 
         internal void Open() {
@@ -1105,14 +1094,14 @@ namespace Glamaholic.Ui {
                     .Where(item => item != null)
                     .Cast<Item>();
             } else {
-                items = this.Items;
+                items = DataCache.EquippableItems.Value;
             }
 
-            this.FilteredItems = items
+            this.FilteredItems = DataCache.EquippableItems.Value
                 .Where(item => !Util.IsItemSkipped(item))
                 .Where(item => Util.MatchesSlot(item.EquipSlotCategory.Value!, slot))
                 .Where(item => this._itemFilter.Length == 0 || item.Name.ExtractText().ToLowerInvariant().Contains(filter))
-                .ToList();
+                .ToImmutableList();
         }
 
         private void FillEmptySlots(SavedPlate plate) {
@@ -1135,7 +1124,6 @@ namespace Glamaholic.Ui {
         }
 
         private string ConvertToText(SavedPlate plate) {
-            var itemSheet = Service.DataManager.GetExcelSheet<Item>()!;
             var stainSheet = Service.DataManager.GetExcelSheet<Stain>()!;
 
             StringBuilder sb = new();
@@ -1147,7 +1135,7 @@ namespace Glamaholic.Ui {
                 } else {
                     sb.Append(kvp.Key.ToString()).Append(": ");
 
-                    if (itemSheet.TryGetRow(kvp.Value.ItemId, out var item)) {
+                    if (DataCache.EquippableItems.Value.TryGetFirst(i => i.RowId == kvp.Value.ItemId, out Item item)) {
                         sb.AppendLine("Unknown Item");
                     } else {
                         sb.Append(item.Name);
