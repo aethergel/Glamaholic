@@ -102,7 +102,7 @@ namespace Glamaholic.Ui.Helpers {
             if (Util.DrawTextInput("current-name", ref nameInput, message: msg, flags: ImGuiInputTextFlags.AutoSelectAll)) {
                 var items = getter();
                 if (items != null) {
-                    CopyToGlamourPlate(ui, nameInput, items, -1);
+                    CopyToGlamourPlate(ui, nameInput, items, null);
                     ret = true;
                 }
             }
@@ -116,24 +116,35 @@ namespace Glamaholic.Ui.Helpers {
             ImGui.Separator();
 
             if (ImGui.BeginChild("helper-overwrite", new Vector2(250, 350))) {
-                for (var i = 0; i < ui.Plugin.Config.Plates.Count; i++) {
-                    var plate = ui.Plugin.Config.Plates[i];
-                    var ctrl = ImGui.GetIO().KeyCtrl;
-                    if (ImGui.Selectable($"{plate.Name}##{i}") && ctrl) {
-                        var items = getter();
-                        if (items != null) {
-                            CopyToGlamourPlate(ui, plate.Name, items, i);
-                            ret = true;
-                        }
-                    }
+                void DrawPlateNodes(List<TreeNode> nodes) {
+                    foreach (var node in nodes) {
+                        if (node is PlateNode leaf) {
+                            var plate = leaf.Plate;
+                            var ctrl = ImGui.GetIO().KeyCtrl;
+                            if (ImGui.Selectable($"{plate.Name}##{node.Id}") && ctrl) {
+                                var items = getter();
+                                if (items != null) {
+                                    CopyToGlamourPlate(ui, plate.Name, items, node.Id);
+                                    ret = true;
+                                }
+                            }
 
-                    if (!ctrl && ImGui.IsItemHovered()) {
-                        ImGui.BeginTooltip();
-                        ImGui.TextUnformatted("Hold Control and click to overwrite.");
-                        ImGui.EndTooltip();
+                            if (!ctrl && ImGui.IsItemHovered()) {
+                                ImGui.BeginTooltip();
+                                ImGui.TextUnformatted("Hold Control and click to overwrite.");
+                                ImGui.EndTooltip();
+                            }
+                        } else if (node is FolderNode folder) {
+                            ImGui.TextUnformatted($"[Folder] {folder.Name}");
+
+                            if (folder.Children.Count > 0) {
+                                DrawPlateNodes(folder.Children);
+                            }
+                        }
                     }
                 }
 
+                DrawPlateNodes(ui.Plugin.Config.Plates);
                 ImGui.EndChild();
             }
 
@@ -142,22 +153,28 @@ namespace Glamaholic.Ui.Helpers {
             return ret;
         }
 
-        private static void CopyToGlamourPlate(PluginUi ui, string name, Dictionary<PlateSlot, SavedGlamourItem> items, int idx) {
+        private static void CopyToGlamourPlate(PluginUi ui, string name, Dictionary<PlateSlot, SavedGlamourItem> items, Guid? plateId) {
             var plate = new SavedPlate(name) {
                 Items = items,
             };
 
             Configuration.SanitisePlate(plate);
 
-            if (idx == -1) {
-                ui.Plugin.Config.AddPlate(plate);
+            if (plateId == null) {
+                var id = ui.Plugin.Config.AddPlate(plate);
+                ui.Plugin.SaveConfig();
+                ui.OpenMainInterface();
+                var allPlates = TreeUtils.GetAllPlates(ui.Plugin.Config.Plates);
+                if (allPlates.Count > 0) {
+                    ui.SwitchPlate(id, true);
+                }
             } else {
-                ui.Plugin.Config.Plates[idx] = plate;
+                TreeUtils.ReplacePlate(ui.Plugin.Config.Plates, plateId.Value, plate);
+                TreeUtils.Sort(ui.Plugin.Config.Plates);
+                ui.Plugin.SaveConfig();
+                ui.OpenMainInterface();
+                ui.SwitchPlate(plateId.Value, true);
             }
-
-            ui.Plugin.SaveConfig();
-            ui.OpenMainInterface();
-            ui.SwitchPlate(idx == -1 ? ui.Plugin.Config.Plates.Count - 1 : idx, true);
         }
     }
 }

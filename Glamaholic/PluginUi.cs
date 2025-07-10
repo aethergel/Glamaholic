@@ -74,9 +74,8 @@ namespace Glamaholic {
             });
         }
 
-        internal void SwitchPlate(int idx, bool scrollTo = false) {
-            this.MainInterface.SwitchPlate(idx, scrollTo);
-        }
+        internal void SwitchPlate(Guid plateId, bool scrollTo = false) =>
+            this.MainInterface.SwitchPlate(plateId, scrollTo);
 
         internal unsafe void TryOn(IEnumerable<SavedGlamourItem> items) {
             void SetTryOnSave(bool save) {

@@ -45,7 +45,7 @@ namespace Glamaholic.Ui {
 
         private bool _visible;
         private int _dragging = -1;
-        private int _selectedPlate = -1;
+        private Guid? _selectedPlateId = null;
         private bool _scrollToSelected;
         private string _plateFilter = string.Empty;
         private bool _showRename;
@@ -53,6 +53,7 @@ namespace Glamaholic.Ui {
         private bool _deleteConfirm;
         private bool _editing;
         private SavedPlate? _editingPlate;
+        private Guid? _editingPlateId = null;
         private string _itemFilter = string.Empty;
         private string _dyeFilter = string.Empty;
         private volatile bool _ecImporting;
@@ -64,6 +65,12 @@ namespace Glamaholic.Ui {
         private string _massImportLastURL = string.Empty;
         private string _massImportMessage = string.Empty;
         private int _massImportTarget = 0;
+        private string _newFolderName = string.Empty;
+
+        private Guid? _contextMenuNodeId = null;
+        private bool _confirmDeleteNode = false;
+        private bool _confirmDeleteFolder = false;
+        private int? _pendingFolderAction = null; // 0 = delete all, 1 = move out
 
         internal MainInterface(PluginUi ui) {
             this.Ui = ui;
@@ -114,9 +121,10 @@ namespace Glamaholic.Ui {
 
             if (ImGui.BeginMenu("Plates")) {
                 if (ImGui.MenuItem("New")) {
-                    this.Ui.Plugin.Config.AddPlate(new SavedPlate("Untitled Plate"));
+                    var id = this.Ui.Plugin.Config.AddPlate(new SavedPlate("Untitled Plate"));
+                    TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                     this.Ui.Plugin.SaveConfig();
-                    this.SwitchPlate(this.Ui.Plugin.Config.Plates.Count - 1, true);
+                    this.SwitchPlate(id, true);
                 }
 
                 if (ImGui.MenuItem("Import from Clipboard")) {
@@ -124,9 +132,10 @@ namespace Glamaholic.Ui {
                     try {
                         var plate = JsonConvert.DeserializeObject<SharedPlate>(json);
                         if (plate != null) {
-                            this.Ui.Plugin.Config.AddPlate(plate.ToPlate());
+                            var id = this.Ui.Plugin.Config.AddPlate(plate.ToPlate());
+                            TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                             this.Ui.Plugin.SaveConfig();
-                            this.Ui.SwitchPlate(this.Ui.Plugin.Config.Plates.Count - 1);
+                            this.Ui.SwitchPlate(id);
                         }
                     } catch (Exception ex) {
                         Service.Log.Warning(ex, "Failed to import glamour plate");
@@ -248,9 +257,10 @@ namespace Glamaholic.Ui {
                 switch (target) {
                     case ECImportTarget.NewPlate:
                         import.Tags.Add("Eorzea Collection");
-                        this.Ui.Plugin.Config.AddPlate(import);
+                        var id = this.Ui.Plugin.Config.AddPlate(import);
+                        TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                         this.Ui.Plugin.SaveConfig();
-                        this.SwitchPlate(this.Ui.Plugin.Config.Plates.Count - 1, true);
+                        this.SwitchPlate(id, true);
                         break;
                     case ECImportTarget.TryOn:
                         this.Ui.TryOnPlate(import);
@@ -263,6 +273,7 @@ namespace Glamaholic.Ui {
         }
 
         private void DrawPlateList() {
+            // Begin outer child for the whole left panel
             if (!ImGui.BeginChild("plate list", new Vector2(205 * ImGuiHelpers.GlobalScale, 0), true)) {
                 return;
             }
@@ -274,85 +285,248 @@ namespace Glamaholic.Ui {
                     : new FilterInfo(Service.DataManager, this._plateFilter);
             }
 
-            (int src, int dst)? drag = null;
-            if (ImGui.BeginChild("plate list actual", Vector2.Zero, false, ImGuiWindowFlags.HorizontalScrollbar)) {
-                for (var i = 0; i < this.Ui.Plugin.Config.Plates.Count; i++) {
-                    var plate = this.Ui.Plugin.Config.Plates[i];
+            float buttonBarHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().FramePadding.Y * 2;
+            float scrollAreaHeight = ImGui.GetContentRegionAvail().Y - buttonBarHeight;
+            if (scrollAreaHeight < 50f) scrollAreaHeight = 50f;
 
-                    if (this.PlateFilter != null && !this.PlateFilter.Matches(plate)) {
-                        continue;
-                    }
+            Guid? pendingMoveNodeId = null;
+            Guid? pendingMoveTargetId = null; // null means move to root
 
-                    int? switchTo = null;
-                    if (ImGui.Selectable($"{plate.Name}##{i}", this._selectedPlate == i)) {
-                        switchTo = i;
-                    }
+            List<(Guid nodeId, int? folderAction)> deferredActions = new();
 
-                    if (this._scrollToSelected && this._selectedPlate == i) {
-                        this._scrollToSelected = false;
-                        ImGui.SetScrollHereY(1f);
-                    }
+            if (ImGui.BeginChild("plate tree", new Vector2(0, scrollAreaHeight), false, ImGuiWindowFlags.HorizontalScrollbar)) {
+                void DrawPlateNodes(List<TreeNode> nodes, int depth = 0, string parentPath = "") {
+                    foreach (var node in nodes) {
+                        if (node is PlateNode leaf) {
+                            if (this.PlateFilter != null && !this.PlateFilter.Matches(leaf.Plate)) {
+                                continue;
+                            }
 
-                    if (ImGui.IsItemClicked(ImGuiMouseButton.Right)) {
-                        switchTo = -1;
-                    }
+                            Guid? switchTo = null;
+                            bool isSelected = this._selectedPlateId == node.Id;
+                            if (ImGui.Selectable($"{new string(' ', depth * 2)}{leaf.Name}##{node.Id}", isSelected)) {
+                                switchTo = node.Id;
+                            }
 
-                    if (ImGui.IsItemHovered()) {
-                        ImGui.PushFont(UiBuilder.IconFont);
-                        var deleteWidth = ImGui.CalcTextSize(FontAwesomeIcon.Times.ToIconString()).X;
-                        ImGui.SameLine(ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemInnerSpacing.X * 2 - deleteWidth);
-                        ImGui.TextUnformatted(FontAwesomeIcon.Times.ToIconString());
-                        ImGui.PopFont();
+                            if (ImGui.BeginDragDropSource()) {
+                                unsafe {
+                                    var dragId = node.Id;
+                                    ImGui.SetDragDropPayload("PLATE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                }
 
-                        var mouseDown = ImGui.IsMouseDown(ImGuiMouseButton.Left);
-                        var mouseClicked = ImGui.IsMouseReleased(ImGuiMouseButton.Left);
-                        if (ImGui.IsItemHovered() || mouseDown) {
-                            if (mouseClicked) {
-                                switchTo = null;
+                                ImGui.Text($"Moving '{leaf.Name}'");
+                                ImGui.EndDragDropSource();
+                            }
 
-                                if (this._deleteConfirm) {
-                                    this._deleteConfirm = false;
-                                    if (this._selectedPlate == i) {
-                                        switchTo = -1;
+                            // Allow drag-drop target for non-folder nodes (move to root)
+                            if (ImGui.BeginDragDropTarget()) {
+                                unsafe {
+                                    var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                                    if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
+                                        Guid draggedNodeId = *(Guid*) payload.Data;
+                                        if (draggedNodeId != node.Id) {
+                                            pendingMoveNodeId = draggedNodeId;
+                                            pendingMoveTargetId = null; // move to root
+                                        }
+                                    }
+                                }
+                                ImGui.EndDragDropTarget();
+                            }
+
+                            if (this._scrollToSelected && isSelected) {
+                                this._scrollToSelected = false;
+                                ImGui.SetScrollHereY(1f);
+                            }
+
+                            // Right-click context menu for plate node
+                            if (ImGui.BeginPopupContextItem($"plate-node-context-{node.Id}")) {
+                                if (ImGui.MenuItem("Delete")) {
+                                    _contextMenuNodeId = node.Id;
+                                    _confirmDeleteNode = true;
+                                }
+                                ImGui.EndPopup();
+                            }
+
+                            if (_confirmDeleteNode && _contextMenuNodeId == node.Id) {
+                                ImGui.OpenPopup($"confirm-delete-plate-{node.Id}");
+                            }
+
+                            if (ImGui.BeginPopup($"confirm-delete-plate-{node.Id}")) {
+                                ImGui.TextUnformatted("Delete this plate? This cannot be undone.");
+                                if (ImGui.Button("Delete")) {
+                                    deferredActions.Add((node.Id, null));
+                                    _confirmDeleteNode = false;
+                                    _contextMenuNodeId = null;
+                                    ImGui.CloseCurrentPopup();
+                                }
+
+                                ImGui.SameLine();
+
+                                if (ImGui.Button("Cancel")) {
+                                    _confirmDeleteNode = false;
+                                    _contextMenuNodeId = null;
+                                    ImGui.CloseCurrentPopup();
+                                }
+                                ImGui.EndPopup();
+                            }
+
+                            if (switchTo != null) {
+                                this.SwitchPlate(switchTo.Value);
+                            }
+                        } else if (node is FolderNode folder) {
+                            string folderPath = parentPath + "/" + folder.Name;
+                            ImGui.PushID(folderPath);
+
+                            if (ImGui.TreeNodeEx($"{folder.Name}")) {
+                                if (ImGui.BeginDragDropTarget()) {
+                                    unsafe {
+                                        var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
+                                            Guid draggedNodeId = *(Guid*) payload.Data;
+                                            if (draggedNodeId != node.Id) {
+                                                pendingMoveNodeId = draggedNodeId;
+                                                pendingMoveTargetId = node.Id;
+                                            }
+                                        }
+                                    }
+                                    ImGui.EndDragDropTarget();
+                                }
+
+                                // Right-click context menu for folder node
+                                if (ImGui.BeginPopupContextItem($"folder-node-context-{node.Id}")) {
+                                    if (ImGui.MenuItem("Delete Folder (and all contents)")) {
+                                        _contextMenuNodeId = node.Id;
+                                        _pendingFolderAction = 0;
+                                        _confirmDeleteFolder = true;
                                     }
 
-                                    this.Ui.Plugin.Config.Plates.RemoveAt(i);
-                                    this.Ui.Plugin.SaveConfig();
-                                } else {
-                                    this._deleteConfirm = true;
+                                    if (ImGui.MenuItem("Delete Folder (move contents out)")) {
+                                        _contextMenuNodeId = node.Id;
+                                        _pendingFolderAction = 1;
+                                        _confirmDeleteFolder = true;
+                                    }
+
+                                    ImGui.EndPopup();
+                                }
+
+                                if (_confirmDeleteFolder && _contextMenuNodeId == node.Id) {
+                                    ImGui.OpenPopup($"confirm-delete-folder-{node.Id}");
+                                }
+
+                                if (ImGui.BeginPopup($"confirm-delete-folder-{node.Id}")) {
+                                    if (_pendingFolderAction == 0) {
+                                        ImGui.TextUnformatted("Delete this folder and ALL its contents? This cannot be undone.");
+                                    } else {
+                                        ImGui.TextUnformatted("Delete this folder and move all contents out?");
+                                    }
+
+                                    if (ImGui.Button("Delete")) {
+                                        deferredActions.Add((node.Id, _pendingFolderAction));
+                                        _confirmDeleteFolder = false;
+                                        _contextMenuNodeId = null;
+                                        _pendingFolderAction = null;
+                                        ImGui.CloseCurrentPopup();
+                                    }
+
+                                    ImGui.SameLine();
+
+                                    if (ImGui.Button("Cancel")) {
+                                        _confirmDeleteFolder = false;
+                                        _contextMenuNodeId = null;
+                                        _pendingFolderAction = null;
+                                        ImGui.CloseCurrentPopup();
+                                    }
+
+                                    ImGui.EndPopup();
+                                }
+
+                                if (folder.Children.Count > 0) {
+                                    DrawPlateNodes(folder.Children, depth + 1, folderPath);
+                                }
+
+                                ImGui.TreePop();
+                            } else {
+                                // Still allow drag-drop on collapsed folders
+                                if (ImGui.BeginDragDropTarget()) {
+                                    unsafe {
+                                        var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
+                                            Guid draggedNodeId = *(Guid*) payload.Data;
+                                            if (draggedNodeId != node.Id) {
+                                                pendingMoveNodeId = draggedNodeId;
+                                                pendingMoveTargetId = node.Id;
+                                            }
+                                        }
+                                    }
+                                    ImGui.EndDragDropTarget();
+                                }
+
+                                // Right-click context menu for collapsed folder
+                                if (ImGui.BeginPopupContextItem($"folder-node-context-{node.Id}")) {
+                                    if (ImGui.MenuItem("Delete Folder (and all contents)")) {
+                                        _contextMenuNodeId = node.Id;
+                                        _pendingFolderAction = 0;
+                                        _confirmDeleteFolder = true;
+                                    }
+                                    if (ImGui.MenuItem("Delete Folder (move contents out)")) {
+                                        _contextMenuNodeId = node.Id;
+                                        _pendingFolderAction = 1;
+                                        _confirmDeleteFolder = true;
+                                    }
+
+                                    ImGui.EndPopup();
+                                }
+
+                                if (_confirmDeleteFolder && _contextMenuNodeId == node.Id) {
+                                    ImGui.OpenPopup($"confirm-delete-folder-{node.Id}");
+                                }
+
+                                if (ImGui.BeginPopup($"confirm-delete-folder-{node.Id}")) {
+                                    if (_pendingFolderAction == 0) {
+                                        ImGui.TextUnformatted("Delete this folder and ALL its contents? This cannot be undone.");
+                                    } else {
+                                        ImGui.TextUnformatted("Delete this folder and move all contents out?");
+                                    }
+
+                                    if (ImGui.Button("Delete")) {
+                                        deferredActions.Add((node.Id, _pendingFolderAction));
+                                        _confirmDeleteFolder = false;
+                                        _contextMenuNodeId = null;
+                                        _pendingFolderAction = null;
+                                        ImGui.CloseCurrentPopup();
+                                    }
+
+                                    ImGui.SameLine();
+
+                                    if (ImGui.Button("Cancel")) {
+                                        _confirmDeleteFolder = false;
+                                        _contextMenuNodeId = null;
+                                        _pendingFolderAction = null;
+                                        ImGui.CloseCurrentPopup();
+                                    }
+
+                                    ImGui.EndPopup();
                                 }
                             }
-                        } else {
-                            this._deleteConfirm = false;
-                        }
 
-                        if (this._deleteConfirm) {
-                            ImGui.BeginTooltip();
-                            ImGui.TextUnformatted("Click delete again to confirm.");
-                            ImGui.EndTooltip();
+                            ImGui.PopID();
                         }
                     }
+                }
 
-                    if (switchTo != null) {
-                        this.SwitchPlate(switchTo.Value);
-                    }
+                DrawPlateNodes(this.Ui.Plugin.Config.Plates);
 
-                    // handle dragging
-                    if (this._plateFilter.Length == 0 && ImGui.IsItemActive() || this._dragging == i) {
-                        this._dragging = i;
-                        var step = 0;
-                        if (ImGui.GetIO().MouseDelta.Y < 0 && ImGui.GetMousePos().Y < ImGui.GetItemRectMin().Y) {
-                            step = -1;
-                        }
-
-                        if (ImGui.GetIO().MouseDelta.Y > 0 && ImGui.GetMousePos().Y > ImGui.GetItemRectMax().Y) {
-                            step = 1;
-                        }
-
-                        if (step != 0) {
-                            drag = (i, i + step);
+                // Add drag-drop target for root (below the tree)
+                if (ImGui.BeginDragDropTarget()) {
+                    unsafe {
+                        var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
+                            Guid draggedNodeId = *(Guid*) payload.Data;
+                            pendingMoveNodeId = draggedNodeId;
+                            pendingMoveTargetId = null; // move to root
                         }
                     }
+                    ImGui.EndDragDropTarget();
                 }
 
                 if (!ImGui.IsMouseDown(ImGuiMouseButton.Left) && this._dragging != -1) {
@@ -360,25 +534,85 @@ namespace Glamaholic.Ui {
                     this.Ui.Plugin.SaveConfig();
                 }
 
-                if (drag != null && drag.Value.dst < this.Ui.Plugin.Config.Plates.Count && drag.Value.dst >= 0) {
-                    this._dragging = drag.Value.dst;
-                    // ReSharper disable once SwapViaDeconstruction
-                    var temp = this.Ui.Plugin.Config.Plates[drag.Value.src];
-                    this.Ui.Plugin.Config.Plates[drag.Value.src] = this.Ui.Plugin.Config.Plates[drag.Value.dst];
-                    this.Ui.Plugin.Config.Plates[drag.Value.dst] = temp;
-
-                    // do not SwitchPlate, because this is technically not a switch
-                    if (this._selectedPlate == drag.Value.dst) {
-                        var step = drag.Value.dst - drag.Value.src;
-                        this._selectedPlate = drag.Value.dst - step;
-                    } else if (this._selectedPlate == drag.Value.src) {
-                        this._selectedPlate = drag.Value.dst;
-                    }
-                }
-
                 ImGui.EndChild();
             }
 
+            // Process deferred actions using new TreeUtils
+            if (pendingMoveNodeId.HasValue) {
+                TreeUtils.MoveNodeToFolder(this.Ui.Plugin.Config.Plates, pendingMoveNodeId.Value, pendingMoveTargetId);
+                TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                this.Ui.Plugin.SaveConfig();
+            }
+
+            if (deferredActions.Count > 0) {
+                foreach (var (nodeId, folderAction) in deferredActions) {
+                    if (folderAction == null) {
+                        // Delete plate node
+                        TreeUtils.RemoveNode(this.Ui.Plugin.Config.Plates, nodeId);
+
+                        // If we deleted the selected plate, clear selection
+                        if (_selectedPlateId == nodeId) {
+                            _selectedPlateId = null;
+                        }
+                    } else if (folderAction == 0) {
+                        // Delete folder and all contents
+                        TreeUtils.DeleteFolder(this.Ui.Plugin.Config.Plates, nodeId, false);
+                    } else if (folderAction == 1) {
+                        // Delete folder but move contents out
+                        TreeUtils.DeleteFolder(this.Ui.Plugin.Config.Plates, nodeId, true);
+                    }
+                }
+
+                TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                this.Ui.Plugin.SaveConfig();
+            }
+
+            ImGui.Separator();
+
+            // Button bar for adding new plates or folders
+            ImGui.BeginGroup();
+            ImGui.PushItemWidth(-1);
+            if (ImGui.Button("+ New Folder")) {
+                ImGui.OpenPopup("new-folder-popup");
+                _newFolderName = string.Empty;
+            }
+
+            ImGui.PopItemWidth();
+            if (ImGui.BeginPopup("new-folder-popup")) {
+                ImGui.TextUnformatted("Folder Name:");
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.InputText("##new-folder-name", ref _newFolderName, 128, ImGuiInputTextFlags.EnterReturnsTrue)) {
+                    if (!string.IsNullOrWhiteSpace(_newFolderName)) {
+                        this.Ui.Plugin.Config.Plates.Add(new FolderNode {
+                            Name = _newFolderName.Trim(),
+                            Children = new List<TreeNode>()
+                        });
+                        TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                        this.Ui.Plugin.SaveConfig();
+                        ImGui.CloseCurrentPopup();
+                    }
+                }
+
+                if (ImGui.Button("Create") && !string.IsNullOrWhiteSpace(_newFolderName)) {
+                    this.Ui.Plugin.Config.Plates.Add(new FolderNode {
+                        Name = _newFolderName.Trim(),
+                        Children = new List<TreeNode>()
+                    });
+                    TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                    this.Ui.Plugin.SaveConfig();
+                    ImGui.CloseCurrentPopup();
+                }
+
+                ImGui.SameLine();
+
+                if (ImGui.Button("Cancel")) {
+                    ImGui.CloseCurrentPopup();
+                }
+
+                ImGui.EndPopup();
+            }
+
+            ImGui.EndGroup();
             ImGui.EndChild();
         }
 
@@ -663,7 +897,7 @@ namespace Glamaholic.Ui {
                 ImGui.EndTooltip();
             }
 
-            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !this._editing) {
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Left) && !this._editing && mirage != null) {
                 if (Service.DataManager.GetExcelSheet<Item>()!.TryGetRow(mirage!.ItemId, out var item)) {
                     string name = item.Name.ExtractText();
                     ImGui.SetClipboardText(name);
@@ -718,7 +952,8 @@ namespace Glamaholic.Ui {
             ImGui.EndTable();
         }
 
-        private void DrawPlateButtons(SavedPlate plate) {
+        private void DrawPlateButtons(PlateNode node) {
+            var plate = node.Plate!;
             if (this._editing || !ImGui.BeginTable("plate buttons", 6, ImGuiTableFlags.SizingFixedFit)) {
                 return;
             }
@@ -747,6 +982,7 @@ namespace Glamaholic.Ui {
             if (Util.IconButton(FontAwesomeIcon.PencilAlt, tooltip: "Edit")) {
                 this._editing = true;
                 this._editingPlate = plate.Clone();
+                this._editingPlateId = node.Id;
             }
 
             ImGui.TableNextColumn();
@@ -803,6 +1039,7 @@ namespace Glamaholic.Ui {
 
                 if (toRemove > -1) {
                     plate.Tags.RemoveAt(toRemove);
+                    plate.Tags.Sort();
                     this.Ui.Plugin.SaveConfig();
                 }
 
@@ -815,73 +1052,91 @@ namespace Glamaholic.Ui {
                 return;
             }
 
-            if (this._selectedPlate > -1 && this._selectedPlate < this.Ui.Plugin.Config.Plates.Count) {
-                var plate = this._editingPlate ?? this.Ui.Plugin.Config.Plates[this._selectedPlate];
+            if (_selectedPlateId == null) {
+                ImGui.EndChild();
+                return;
+            }
 
-                {
-                    ImGui.BeginGroup();
-                    this.DrawPlatePreview(plate);
-                    ImGui.EndGroup();
+            var node = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, (Guid) _selectedPlateId!);
+            if (node is not PlateNode selectedNode) {
+                ImGui.EndChild();
+                return;
+            }
+
+            var plate = _editingPlate ?? selectedNode.Plate;
+
+            {
+                ImGui.BeginGroup();
+                this.DrawPlatePreview(plate);
+                ImGui.EndGroup();
+            }
+
+            ImGui.SameLine();
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
+
+            {
+                ImGui.BeginGroup();
+                this.DrawRightPanel(plate);
+                ImGui.EndGroup();
+            }
+
+            var renameWasVisible = this._showRename;
+
+            this.DrawPlateButtons(selectedNode);
+
+            foreach (var (msg, _) in this._timedMessages) {
+                Util.TextUnformattedWrapped(msg);
+            }
+
+            if (this._showRename && Util.DrawTextInput("plate-rename", ref this._renameInput, flags: ImGuiInputTextFlags.AutoSelectAll)) {
+                plate.Name = this._renameInput;
+                this.Ui.Plugin.SaveConfig();
+                this._showRename = false;
+            }
+
+            if (this._showRename && !renameWasVisible) {
+                ImGui.SetKeyboardFocusHere(-1);
+            }
+
+            if (this._editing) {
+                Util.TextUnformattedWrapped("Click an item to edit it. Right-click to dye.");
+
+                if (ImGui.Button("Save") && this._editingPlate != null) {
+                    selectedNode.Plate = _editingPlate.Clone();
+
+                    TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                    this.Ui.Plugin.SaveConfig();
+                    this.ResetEditing();
                 }
 
                 ImGui.SameLine();
-                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + 10);
 
-                {
-                    ImGui.BeginGroup();
-                    this.DrawRightPanel(plate);
-                    ImGui.EndGroup();
+                if (ImGui.Button("Cancel")) {
+                    this.ResetEditing();
                 }
-
-                var renameWasVisible = this._showRename;
-
-                this.DrawPlateButtons(plate);
-
-                foreach (var (msg, _) in this._timedMessages) {
-                    Util.TextUnformattedWrapped(msg);
-                }
-
-                if (this._showRename && Util.DrawTextInput("plate-rename", ref this._renameInput, flags: ImGuiInputTextFlags.AutoSelectAll)) {
-                    plate.Name = this._renameInput;
-                    this.Ui.Plugin.SaveConfig();
-                    this._showRename = false;
-                }
-
-                if (this._showRename && !renameWasVisible) {
-                    ImGui.SetKeyboardFocusHere(-1);
-                }
-
-                if (this._editing) {
-                    Util.TextUnformattedWrapped("Click an item to edit it. Right-click to dye.");
-
-                    if (ImGui.Button("Save") && this._editingPlate != null) {
-                        this.Ui.Plugin.Config.Plates[this._selectedPlate] = this._editingPlate;
-                        this.Ui.Plugin.SaveConfig();
-                        this.ResetEditing();
-                    }
-
-                    ImGui.SameLine();
-
-                    if (ImGui.Button("Cancel")) {
-                        this.ResetEditing();
-                    }
-                }
-
-                this.DrawPlateTags(plate);
             }
+
+            this.DrawPlateTags(plate);
 
             ImGui.EndChild();
         }
 
         private void DrawRightPanel(SavedPlate plate) {
+            // Something broke ImGui separator positioning or I'm an idiot
+            // so we're just going to draw our own heading separators
+            var drawList = ImGui.GetWindowDrawList();
+            void SeparatorHack(int? width = null) {
+                var cursorPos = ImGui.GetCursorScreenPos();
+                drawList.AddLine(cursorPos + new Vector2(0, -3), cursorPos + new Vector2(width ?? ImGui.GetContentRegionAvail().X, -3), ImGui.GetColorU32(ImGuiCol.Separator));
+            }
+
             ImGui.TextUnformatted(plate.Name);
-            ImGui.Separator();
+            SeparatorHack();
 
             DrawDyeListLabel(plate);
 
             ImGui.NewLine();
             ImGui.TextUnformatted("Customize");
-            ImGui.Separator();
 
             bool fillSlots = ImGui.Button("Fill Empty Slots with New Emperor");
             if (ImGui.IsItemHovered())
@@ -893,7 +1148,7 @@ namespace Glamaholic.Ui {
             if (Interop.Glamourer.IsAvailable()) {
                 ImGui.NewLine();
                 ImGui.TextUnformatted("Glamourer");
-                ImGui.Separator();
+                SeparatorHack();
 
                 if (ImGui.Button("Try On") && Service.ClientState.LocalPlayer != null)
                     Interop.Glamourer.TryOn(Service.ClientState.LocalPlayer!.ObjectIndex, plate);
@@ -901,7 +1156,7 @@ namespace Glamaholic.Ui {
 
             ImGui.NewLine();
             ImGui.TextUnformatted("Settings");
-            ImGui.Separator();
+            SeparatorHack();
 
             bool newEmperor = plate.FillWithNewEmperor;
             if (ImGui.Checkbox("Fill empty slots with New Emperor for Try on & Apply", ref newEmperor)) {
@@ -1063,7 +1318,7 @@ namespace Glamaholic.Ui {
 
         private void HandleTimers() {
             if (this._timedMessages.Count == 0) return;
-            
+
             var keys = this._timedMessages.Keys.ToArray();
             foreach (var key in keys) {
                 if (this._timedMessages[key].Elapsed > TimeSpan.FromSeconds(5)) {
@@ -1078,8 +1333,8 @@ namespace Glamaholic.Ui {
             this._timedMessages[message] = timer;
         }
 
-        internal void SwitchPlate(int idx, bool scrollTo = false) {
-            this._selectedPlate = idx;
+        internal void SwitchPlate(Guid plateId, bool scrollTo = false) {
+            this._selectedPlateId = plateId;
             this._scrollToSelected = scrollTo;
             this._renameInput = string.Empty;
             this._showRename = false;
@@ -1091,6 +1346,7 @@ namespace Glamaholic.Ui {
         private void ResetEditing() {
             this._editing = false;
             this._editingPlate = null;
+            this._editingPlateId = null;
             this._itemFilter = string.Empty;
             this._dyeFilter = string.Empty;
         }
