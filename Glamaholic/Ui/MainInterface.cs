@@ -311,7 +311,7 @@ namespace Glamaholic.Ui {
                             if (ImGui.BeginDragDropSource()) {
                                 unsafe {
                                     var dragId = node.Id;
-                                    ImGui.SetDragDropPayload("PLATE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                    ImGui.SetDragDropPayload("TREE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
                                 }
 
                                 ImGui.Text($"Moving '{leaf.Name}'");
@@ -321,7 +321,7 @@ namespace Glamaholic.Ui {
                             // Allow drag-drop target for non-folder nodes (move to root)
                             if (ImGui.BeginDragDropTarget()) {
                                 unsafe {
-                                    var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                                    var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
                                     if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
                                         Guid draggedNodeId = *(Guid*) payload.Data;
                                         if (draggedNodeId != node.Id) {
@@ -378,14 +378,35 @@ namespace Glamaholic.Ui {
                             ImGui.PushID(folderPath);
 
                             if (ImGui.TreeNodeEx($"{folder.Name}")) {
+                                // Add drag source for expanded folders
+                                if (ImGui.BeginDragDropSource()) {
+                                    unsafe {
+                                        var dragId = node.Id;
+                                        ImGui.SetDragDropPayload("TREE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                    }
+
+                                    ImGui.Text($"Moving folder '{folder.Name}'");
+                                    ImGui.EndDragDropSource();
+                                }
+
                                 if (ImGui.BeginDragDropTarget()) {
                                     unsafe {
-                                        var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                                        var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
                                         if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
                                             Guid draggedNodeId = *(Guid*) payload.Data;
                                             if (draggedNodeId != node.Id) {
-                                                pendingMoveNodeId = draggedNodeId;
-                                                pendingMoveTargetId = node.Id;
+                                                // Prevent dropping a folder into itself or its descendants
+                                                var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
+                                                bool isValidDrop = true;
+                                                
+                                                if (draggedNode is FolderNode draggedFolder) {
+                                                    isValidDrop = !IsDescendantOf(this.Ui.Plugin.Config.Plates, node.Id, draggedNodeId);
+                                                }
+                                                
+                                                if (isValidDrop) {
+                                                    pendingMoveNodeId = draggedNodeId;
+                                                    pendingMoveTargetId = node.Id;
+                                                }
                                             }
                                         }
                                     }
@@ -446,15 +467,36 @@ namespace Glamaholic.Ui {
 
                                 ImGui.TreePop();
                             } else {
+                                // Add drag source for collapsed folders
+                                if (ImGui.BeginDragDropSource()) {
+                                    unsafe {
+                                        var dragId = node.Id;
+                                        ImGui.SetDragDropPayload("TREE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                    }
+
+                                    ImGui.Text($"Moving folder '{folder.Name}'");
+                                    ImGui.EndDragDropSource();
+                                }
+
                                 // Still allow drag-drop on collapsed folders
                                 if (ImGui.BeginDragDropTarget()) {
                                     unsafe {
-                                        var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                                        var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
                                         if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
                                             Guid draggedNodeId = *(Guid*) payload.Data;
                                             if (draggedNodeId != node.Id) {
-                                                pendingMoveNodeId = draggedNodeId;
-                                                pendingMoveTargetId = node.Id;
+                                                // Prevent dropping a folder into itself or its descendants
+                                                var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
+                                                bool isValidDrop = true;
+                                                
+                                                if (draggedNode is FolderNode draggedFolder) {
+                                                    isValidDrop = !IsDescendantOf(this.Ui.Plugin.Config.Plates, node.Id, draggedNodeId);
+                                                }
+                                                
+                                                if (isValidDrop) {
+                                                    pendingMoveNodeId = draggedNodeId;
+                                                    pendingMoveTargetId = node.Id;
+                                                }
                                             }
                                         }
                                     }
@@ -519,7 +561,7 @@ namespace Glamaholic.Ui {
                 // Add drag-drop target for root (below the tree)
                 if (ImGui.BeginDragDropTarget()) {
                     unsafe {
-                        var payload = ImGui.AcceptDragDropPayload("PLATE_NODE");
+                        var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
                         if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
                             Guid draggedNodeId = *(Guid*) payload.Data;
                             pendingMoveNodeId = draggedNodeId;
@@ -1441,6 +1483,25 @@ namespace Glamaholic.Ui {
             }
 
             return sb.ToString();
+        }
+
+        private bool IsDescendantOf(List<TreeNode> rootNodes, Guid potentialDescendantId, Guid ancestorId) {
+            var ancestorNode = TreeUtils.FindNodeById(rootNodes, ancestorId);
+            if (ancestorNode is not FolderNode ancestorFolder)
+                return false;
+
+            return IsDescendantOfRecursive(ancestorFolder.Children, potentialDescendantId);
+        }
+
+        private bool IsDescendantOfRecursive(List<TreeNode> nodes, Guid targetId) {
+            foreach (var node in nodes) {
+                if (node.Id == targetId)
+                    return true;
+
+                if (node is FolderNode folder && IsDescendantOfRecursive(folder.Children, targetId))
+                    return true;
+            }
+            return false;
         }
     }
 }
