@@ -1,9 +1,10 @@
-﻿using Dalamud.Game;
+﻿using Dalamud.Bindings.ImGui;
+using Dalamud.Game;
 using Dalamud.Interface;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
 using Glamaholic.Interop;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Newtonsoft.Json;
@@ -71,6 +72,8 @@ namespace Glamaholic.Ui {
         private bool _confirmDeleteNode = false;
         private bool _confirmDeleteFolder = false;
         private int? _pendingFolderAction = null; // 0 = delete all, 1 = move out
+
+        private Guid? _dragGuid = null;
 
         internal MainInterface(PluginUi ui) {
             this.Ui = ui;
@@ -171,13 +174,13 @@ namespace Glamaholic.Ui {
 
             var anyChanged = false;
             if (ImGui.BeginMenu("Settings")) {
-                anyChanged |= ImGui.MenuItem("Show plate editor menu", null, ref this.Ui.Plugin.Config.ShowEditorMenu);
-                anyChanged |= ImGui.MenuItem("Show examine window menu", null, ref this.Ui.Plugin.Config.ShowExamineMenu);
-                anyChanged |= ImGui.MenuItem("Show try on menu", null, ref this.Ui.Plugin.Config.ShowTryOnMenu);
+                anyChanged |= ImGui.MenuItem("Show plate editor menu", "", ref this.Ui.Plugin.Config.ShowEditorMenu);
+                anyChanged |= ImGui.MenuItem("Show examine window menu", "", ref this.Ui.Plugin.Config.ShowExamineMenu);
+                anyChanged |= ImGui.MenuItem("Show try on menu", "", ref this.Ui.Plugin.Config.ShowTryOnMenu);
                 ImGui.Separator();
-                anyChanged |= ImGui.MenuItem("Show Ko-fi button", null, ref this.Ui.Plugin.Config.ShowKofiButton);
+                anyChanged |= ImGui.MenuItem("Show Ko-fi button", "", ref this.Ui.Plugin.Config.ShowKofiButton);
                 ImGui.Separator();
-                anyChanged |= ImGui.MenuItem("Troubleshooting mode", null, ref this.Ui.Plugin.Config.TroubleshootingMode);
+                anyChanged |= ImGui.MenuItem("Troubleshooting mode", "", ref this.Ui.Plugin.Config.TroubleshootingMode);
 
                 ImGui.EndMenu();
             }
@@ -311,7 +314,8 @@ namespace Glamaholic.Ui {
                             if (ImGui.BeginDragDropSource()) {
                                 unsafe {
                                     var dragId = node.Id;
-                                    ImGui.SetDragDropPayload("TREE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                    this._dragGuid = node.Id;
+                                    ImGui.SetDragDropPayload("TREE_NODE", null, 0);
                                 }
 
                                 ImGui.Text($"Moving '{leaf.Name}'");
@@ -321,9 +325,8 @@ namespace Glamaholic.Ui {
                             // Allow drag-drop target for non-folder nodes (move to root)
                             if (ImGui.BeginDragDropTarget()) {
                                 unsafe {
-                                    var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                                    if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
-                                        Guid draggedNodeId = *(Guid*) payload.Data;
+                                    if (_dragGuid != null) {
+                                        Guid draggedNodeId = _dragGuid.Value;
                                         if (draggedNodeId != node.Id) {
                                             pendingMoveNodeId = draggedNodeId;
                                             pendingMoveTargetId = null; // move to root
@@ -382,7 +385,8 @@ namespace Glamaholic.Ui {
                                 if (ImGui.BeginDragDropSource()) {
                                     unsafe {
                                         var dragId = node.Id;
-                                        ImGui.SetDragDropPayload("TREE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                        this._dragGuid = node.Id;
+                                        ImGui.SetDragDropPayload("TREE_NODE", null, 0);
                                     }
 
                                     ImGui.Text($"Moving folder '{folder.Name}'");
@@ -392,8 +396,8 @@ namespace Glamaholic.Ui {
                                 if (ImGui.BeginDragDropTarget()) {
                                     unsafe {
                                         var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
-                                            Guid draggedNodeId = *(Guid*) payload.Data;
+                                        if (_dragGuid != null) {
+                                            Guid draggedNodeId = _dragGuid.Value;
                                             if (draggedNodeId != node.Id) {
                                                 // Prevent dropping a folder into itself or its descendants
                                                 var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
@@ -471,7 +475,7 @@ namespace Glamaholic.Ui {
                                 if (ImGui.BeginDragDropSource()) {
                                     unsafe {
                                         var dragId = node.Id;
-                                        ImGui.SetDragDropPayload("TREE_NODE", new IntPtr(&dragId), (uint)sizeof(Guid));
+                                        ImGui.SetDragDropPayload("TREE_NODE", null, 0);
                                     }
 
                                     ImGui.Text($"Moving folder '{folder.Name}'");
@@ -482,8 +486,8 @@ namespace Glamaholic.Ui {
                                 if (ImGui.BeginDragDropTarget()) {
                                     unsafe {
                                         var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
-                                            Guid draggedNodeId = *(Guid*) payload.Data;
+                                        if (_dragGuid != null) {
+                                            Guid draggedNodeId = _dragGuid.Value;
                                             if (draggedNodeId != node.Id) {
                                                 // Prevent dropping a folder into itself or its descendants
                                                 var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
@@ -562,8 +566,8 @@ namespace Glamaholic.Ui {
                 if (ImGui.BeginDragDropTarget()) {
                     unsafe {
                         var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                        if (payload.NativePtr != null && payload.Data != IntPtr.Zero && payload.DataSize == sizeof(Guid)) {
-                            Guid draggedNodeId = *(Guid*) payload.Data;
+                        if (_dragGuid != null) {
+                            Guid draggedNodeId = _dragGuid.Value;
                             pendingMoveNodeId = draggedNodeId;
                             pendingMoveTargetId = null; // move to root
                         }
@@ -788,7 +792,7 @@ namespace Glamaholic.Ui {
                 ImGui.SameLine();
                 ImGui.TextUnformatted("None (remove existing)");
 
-                var clipper = new ImGuiListClipperPtr(ImGuiNative.ImGuiListClipper_ImGuiListClipper());
+                var clipper = ImGui.ImGuiListClipper();
 
                 clipper.Begin(this.FilteredItems.Count);
                 while (clipper.Step()) {
@@ -869,7 +873,7 @@ namespace Glamaholic.Ui {
                     var icon = this.Ui.GetIcon(item.Icon);
                     if (icon != null) {
                         ImGui.SetCursorPos(cursorBefore + new Vector2(paddingSize / 2f));
-                        ImGui.Image(icon.ImGuiHandle, new Vector2(iconSize));
+                        ImGui.Image(icon.Handle, new Vector2(iconSize));
                         ImGui.SetCursorPos(cursorAfter);
 
                         var circleCentre = drawCursor + new Vector2(iconSize, 4 + paddingSize / 2f);

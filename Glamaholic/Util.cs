@@ -1,7 +1,8 @@
 ﻿using Dalamud.Interface;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.NativeWrapper;
 using Lumina.Excel.Sheets;
 using System;
 
@@ -14,12 +15,12 @@ namespace Glamaholic {
         internal const uint HqItemOffset = 1_000_000; // The XIV code uses 500,000 but I'll trust this
         internal const uint ItemModifierMod = 500_000;
 
-        private static unsafe bool IsOpen(AtkUnitBase* addon) {
-            return addon != null && addon->IsVisible;
+        private static unsafe bool IsOpen(AtkUnitBasePtr addon) {
+            return addon != null && addon.IsVisible;
         }
 
         private static unsafe bool IsOpen(IGameGui gui, string name) {
-            var addon = (AtkUnitBase*) gui.GetAddonByName(name, 1);
+            var addon = gui.GetAddonByName(name, 1);
             return IsOpen(addon);
         }
 
@@ -31,7 +32,7 @@ namespace Glamaholic {
             return plateOpen && (boxOpen || armoireOpen);
         }
 
-        internal static bool DrawTextInput(string id, ref string input, uint max = 512, string message = "Press Enter to save.", ImGuiInputTextFlags flags = ImGuiInputTextFlags.None) {
+        internal static bool DrawTextInput(string id, ref string input, int max = 512, string message = "Press Enter to save.", ImGuiInputTextFlags flags = ImGuiInputTextFlags.None) {
             ImGui.SetNextItemWidth(-1);
             var ret = ImGui.InputText($"##{id}", ref input, max, ImGuiInputTextFlags.EnterReturnsTrue | flags);
 

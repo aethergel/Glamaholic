@@ -1,6 +1,6 @@
 ﻿using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System.Collections.Generic;
 
 namespace Glamaholic.Ui.Helpers {
@@ -17,9 +17,9 @@ namespace Glamaholic.Ui.Helpers {
                 return;
             }
 
-            var examineAddon = (AtkUnitBase*) Service.GameGui.GetAddonByName("CharacterInspect", 1);
+            var examineAddon = Service.GameGui.GetAddonByName("CharacterInspect", 1);
             // ReSharper disable once ConditionIsAlwaysTrueOrFalse
-            if (examineAddon == null || !examineAddon->IsVisible) {
+            if (examineAddon == null || !examineAddon.IsVisible) {
                 return;
             }
 

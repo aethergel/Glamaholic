@@ -1,6 +1,6 @@
 ﻿using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -22,9 +22,9 @@ namespace Glamaholic.Ui.Helpers {
                 return;
             }
 
-            var tryOnAddon = (AtkUnitBase*) Service.GameGui.GetAddonByName("Tryon", 1);
+            var tryOnAddon = Service.GameGui.GetAddonByName("Tryon", 1);
             // ReSharper disable once ConditionIsAlwaysTrueOrFalse
-            if (tryOnAddon == null || !tryOnAddon->IsVisible) {
+            if (tryOnAddon == null || !tryOnAddon.IsVisible) {
                 return;
             }
 

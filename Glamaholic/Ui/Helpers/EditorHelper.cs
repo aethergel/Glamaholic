@@ -1,5 +1,5 @@
 ﻿using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 
 namespace Glamaholic.Ui.Helpers {
     internal class EditorHelper {
@@ -15,9 +15,9 @@ namespace Glamaholic.Ui.Helpers {
                 return;
             }
 
-            var addon = (AtkUnitBase*) Service.GameGui.GetAddonByName(Util.PlateAddon, 1);
+            var addon = Service.GameGui.GetAddonByName(Util.PlateAddon, 1);
             // ReSharper disable once ConditionIsAlwaysTrueOrFalse
-            if (addon == null || !addon->IsVisible) {
+            if (addon == null || !addon.IsVisible) {
                 return;
             }
 

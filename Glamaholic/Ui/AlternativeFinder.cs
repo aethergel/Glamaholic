@@ -2,7 +2,7 @@
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using System;
 using System.Collections.Generic;
@@ -52,7 +52,7 @@ namespace Glamaholic.Ui {
             ImGui.SetColumnWidth(0, MainInterface.IconSize + ImGui.GetStyle().ItemSpacing.X * 2);
             var icon = this.Ui.GetIcon(this.Item.Icon);
             if (icon != null) {
-                ImGui.Image(icon.ImGuiHandle, new Vector2(48));
+                ImGui.Image(icon.Handle, new Vector2(48));
             }
 
             ImGui.NextColumn();

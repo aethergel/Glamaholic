@@ -11,45 +11,14 @@ using Lumina.Extensions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using static FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMiragePrismMiragePlateData;
 
 namespace Glamaholic {
     internal class GameFunctions : IDisposable {
         #region Dynamic
         private static class FunctionDelegates {
-            internal unsafe delegate void SetGlamourPlateSlotDelegate(AgentMiragePrismMiragePlate* agent, MirageSource mirageSource, int slotOrCabinetId, uint itemId, byte stain1, byte stain2);
-
-            internal unsafe delegate void SetGlamourPlateSlotStainsDelegate(AgentMiragePrismMiragePlate* agent, InventoryItem* stain1Item, byte stain1Idx, uint stain1ItemId, InventoryItem* stain2Item, byte stain2Idx, uint stain2ItemId);
-
             internal unsafe delegate int GetCabinetItemIdDelegate(Cabinet* _this, uint baseItemId);
         }
-
-        /*
-         * The game only calls this function when setting items from the Armoire,
-         * however it can safely be used to set items from the Glamour Dresser by providing
-         * the dresser slot in place of the cabinetId as the shared field is interpreted depending on source:
-         * - If mirageSource is the Armoure then slotOrCabinetId should be the Cabinet Item ID fetched from GetCabinetItemId.
-         * - If mirageSource is the Glamour Dresser then slotOrCabinetId should be the item slot in the dresser.
-         * 
-         * This function will always update the item that is currently selected in the Addon.
-         * 
-         * In order to set items in specific slots, you must set selectedItemSlotIdx in
-         * the AgentMiragePrismMiragePlate data first.
-         * 
-         * Updating:
-         * - TODO
-         */
-        [Signature("E8 ?? ?? ?? ?? E9 ?? ?? ?? ?? 48 8B 46 10 8B 1B")]
-        private readonly FunctionDelegates.SetGlamourPlateSlotDelegate SetGlamourPlateSlotNative = null!;
-
-        /*
-         * An InventoryItem -or- item id can be provided for both stains. If using just an item id, set stain1Item/stain2Item to null.
-         * 
-         * Updating:
-         * - Breakpoint on write to MiragePlateItem->Stain1 or MiragePlateItem->Stain2
-         * - ...
-         */
-        [Signature("48 89 74 24 ?? 57 48 83 EC 20 48 8B F2 48 8B F9 48 8B 51 28")]
-        private readonly FunctionDelegates.SetGlamourPlateSlotStainsDelegate SetGlamourPlateSlotStainsNative = null!;
 
         /* 
          * Returns the cabinet id for an item in the Armoire or -1 if not found.
@@ -58,7 +27,7 @@ namespace Glamaholic {
          * 
          * Updating:
          * - Xrefs:
-         *   - AgentCabinet_ReceiveEvent: before call to SetGlamourPlateSlot
+         *   - AgentCabinet_ReceiveEvent: before call to SetSelectedItemData
          *   - ...
          */
         [Signature("E8 ?? ?? ?? ?? 44 8B 0B 44 8B C0")]
@@ -179,14 +148,6 @@ namespace Glamaholic {
             }
         }
 
-        internal unsafe void SetGlamourPlateSlotItem(MirageSource source, int slotOrCabinetId, uint itemId, byte stainId, byte stainId2) {
-            SetGlamourPlateSlotNative(MiragePlateAgent, source, slotOrCabinetId, itemId, stainId, stainId2);
-        }
-
-        internal unsafe void SetGlamourPlateSlotStains(PlateSlot slot, byte stain1Idx, uint stain1Item, byte stain2Idx, uint stain2Item) {
-            SetGlamourPlateSlotStainsNative(MiragePlateAgent, null, stain1Idx, stain1Item, null, stain2Idx, stain2Item);
-        }
-
         internal unsafe bool IsInArmoire(uint itemId) {
             var row = Service.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Cabinet>()!.FirstOrNull(row => row.Item.RowId == itemId);
             if (row == null) {
@@ -251,7 +212,7 @@ namespace Glamaholic {
                     continue;
                 }
 
-                var source = MirageSource.GlamourDresser;
+                var source = ItemSource.PrismBox;
 
                 var info = (-1, 0u, (byte) 0, (byte) 0);
 
@@ -266,7 +227,7 @@ namespace Glamaholic {
                 if (matchingIds.Count == 0) {
                     int cabinetId = GetCabinetItemId(&UIState.Instance()->Cabinet, item.ItemId);
                     if (cabinetId != -1 && this.Armoire->IsItemInCabinet(cabinetId)) {
-                        source = MirageSource.Armoire;
+                        source = ItemSource.Cabinet;
 
                         info = (cabinetId, item.ItemId, 0, 0);
 
@@ -295,9 +256,9 @@ namespace Glamaholic {
                 }
 
                 Plugin.LogTroubleshooting($"SetGlamourPlateItemSlot({source}, {info.Item1}, {info.Item2}, {info.Item3}, {info.Item4})");
-                SetGlamourPlateSlotItem(
+                AgentMiragePrismMiragePlate.Instance()->SetSelectedItemData(
                     source,
-                    info.Item1, // slot or cabinet id
+                    (uint) info.Item1, // slot or cabinet id
                     info.Item2, // item id
                     info.Item3, // stain 1
                     info.Item4  // stain 2
@@ -395,7 +356,8 @@ namespace Glamaholic {
             var stain2Item = SelectStainItem(item.Stain2, usedStains, out var stain2ItemId);
 
             Plugin.LogTroubleshooting($"SetGlamourPlateSlotStains({(stain1Item != null ? stain1Item->Slot : 0)}, {item.Stain1}, {stain1ItemId}, {(stain2Item != null ? stain2Item->Slot : 0)}, {item.Stain2}, {stain2ItemId})");
-            SetGlamourPlateSlotStainsNative(MiragePlateAgent, stain1Item, item.Stain1, stain1ItemId, stain2Item, item.Stain2, stain2ItemId);
+            AgentMiragePrismMiragePlate.Instance()->SetSelectedItemStains(stain1Item, item.Stain1, stain1ItemId,
+                                                                          stain2Item, item.Stain2, stain2ItemId);
         }
 
         internal void TryOn(uint itemId, byte stainId, byte stainId2, bool suppress = true) {

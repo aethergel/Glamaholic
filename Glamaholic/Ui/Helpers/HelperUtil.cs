@@ -1,6 +1,7 @@
 ﻿using Dalamud.Interface.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.NativeWrapper;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -21,22 +22,17 @@ namespace Glamaholic.Ui.Helpers {
                                                             | ImGuiWindowFlags.AlwaysAutoResize
                                                             | ImGuiWindowFlags.NoDocking;
 
-        internal static unsafe Vector2? DrawPosForAddon(AtkUnitBase* addon, bool right = false) {
+        internal static unsafe Vector2? DrawPosForAddon(AtkUnitBasePtr addon, bool right = false) {
             if (addon == null) {
                 return null;
             }
 
-            var root = addon->RootNode;
-            if (root == null) {
-                return null;
-            }
-
             var xModifier = right
-                ? root->Width * addon->Scale - DropdownWidth()
+                ? addon.ScaledWidth - DropdownWidth()
                 : 0;
 
             return ImGuiHelpers.MainViewport.Pos
-                   + new Vector2(addon->X, addon->Y)
+                   + new Vector2(addon.X, addon.Y)
                    + Vector2.UnitX * xModifier
                    - Vector2.UnitY * ImGui.CalcTextSize("A")
                    - Vector2.UnitY * (ImGui.GetStyle().FramePadding.Y + ImGui.GetStyle().FrameBorderSize);
@@ -59,7 +55,7 @@ namespace Glamaholic.Ui.Helpers {
             }
         }
 
-        internal static unsafe void DrawHelper(AtkUnitBase* addon, string id, bool right, Action dropdown) {
+        internal static unsafe void DrawHelper(AtkUnitBasePtr addon, string id, bool right, Action dropdown) {
             var drawPos = DrawPosForAddon(addon, right);
             if (drawPos == null) {
                 return;
