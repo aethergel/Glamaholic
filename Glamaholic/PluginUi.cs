@@ -81,7 +81,7 @@ namespace Glamaholic {
             void SetTryOnSave(bool save) {
                 var tryOnAgent = AgentTryon.Instance();
                 if (tryOnAgent != null)
-                    *(byte*) ((nint) tryOnAgent + 0x35E) = (byte) (save ? 1 : 0);
+                    *(byte*) ((nint) tryOnAgent + 0x366) = (byte) (save ? 1 : 0);
             }
 
             SetTryOnSave(false);
@@ -99,7 +99,7 @@ namespace Glamaholic {
             void SetTryOnSave(bool save) {
                 var tryOnAgent = AgentTryon.Instance();
                 if (tryOnAgent != null)
-                    *(byte*) ((nint) tryOnAgent + 0x35E) = (byte) (save ? 1 : 0);
+                    *(byte*) ((nint) tryOnAgent + 0x366) = (byte) (save ? 1 : 0);
             }
 
             SetTryOnSave(false);
@@ -122,3 +122,46 @@ namespace Glamaholic {
         }
     }
 }
+
+/*
+ * AgentTryOn "Save/Delete Outfit"
+ * - Client::UI::Agent::AgentTryon_ReceiveEvent
+ * - Condition around the YesNo dialog checks if the setting is already enabled
+ * 
+case 0x11u:
+   v38 = 0;
+   if ( *(a1 + 862) ) // <-- cmp [rbx+35Eh], bpl
+   {
+     v49 = *(a1 + 16);
+     v50 = (*(*v49 + 48LL))(v49, *v49, &_ImageBase);
+     AddonText = Client::UI::Misc::RaptureTextModule_GetAddonText(v50, 0x96Eu);
+     v52 = (*(*v49 + 64LL))(v49);
+     *(a1 + 852) = Client::UI::RaptureAtkModule_OpenYesNo(
+                     v52,
+                     AddonText,
+                     qword_142623A18,
+                     qword_142623A20,
+                     a1,
+                     2LL,
+                     0,
+                     *(a1 + 32),
+                     4,
+                     0LL,
+                     0LL,
+                     0,
+                     0LL,
+                     0,
+                     1u,
+                     0,
+                     0,
+                     0,
+                     -1,
+                     0,
+                     0,
+                     0);
+   }
+   else
+   {
+     *(a1 + 862) = 1; // <--
+   }
+ */
