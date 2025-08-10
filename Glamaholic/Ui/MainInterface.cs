@@ -16,6 +16,7 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
+using Dalamud.Interface.Utility.Raii;
 
 namespace Glamaholic.Ui {
     internal class MainInterface {
@@ -288,7 +289,7 @@ namespace Glamaholic.Ui {
                     : new FilterInfo(Service.DataManager, this._plateFilter);
             }
 
-            float buttonBarHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().FramePadding.Y * 2;
+            float buttonBarHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().FramePadding.Y * 3;
             float scrollAreaHeight = ImGui.GetContentRegionAvail().Y - buttonBarHeight;
             if (scrollAreaHeight < 50f) scrollAreaHeight = 50f;
 
@@ -617,13 +618,31 @@ namespace Glamaholic.Ui {
 
             // Button bar for adding new plates or folders
             ImGui.BeginGroup();
+            ImGui.Dummy(new Vector2(0, 1));
+
             ImGui.PushItemWidth(-1);
-            if (ImGui.Button("+ New Folder")) {
+            if (Util.IconButton(FontAwesomeIcon.Plus, tooltip: "New Plate")) {
+                var id = this.Ui.Plugin.Config.AddPlate(new SavedPlate("Untitled Plate"));
+                TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                this.Ui.Plugin.SaveConfig();
+                this.SwitchPlate(id, true);
+            }
+
+            ImGui.SameLine();
+            if (Util.IconButton(FontAwesomeIcon.FolderPlus, tooltip: "New Folder")) {
                 ImGui.OpenPopup("new-folder-popup");
                 _newFolderName = string.Empty;
             }
 
+            // caitlyn: intention was to have right-aligned expand/collapse but it's a PITA with ImGui
+            //float buttonWidth = ImGui.GetFrameHeight();
+            //float spacing = ImGui.GetStyle().ItemSpacing.X * 2;
+            //float totalWidth = buttonWidth * 2 + spacing;
+            //float availWidth = ImGui.GetContentRegionAvail().X;
+            //ImGui.SameLine(availWidth - totalWidth);
+
             ImGui.PopItemWidth();
+
             if (ImGui.BeginPopup("new-folder-popup")) {
                 ImGui.TextUnformatted("Folder Name:");
                 ImGui.SetNextItemWidth(-1);
