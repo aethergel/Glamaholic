@@ -68,8 +68,10 @@ namespace Glamaholic.Ui.Helpers {
         }
 
         private static unsafe Dictionary<PlateSlot, SavedGlamourItem> GetTryOnItems() {
+            // see file footer for information about these offsets
+
             var agent = AgentTryon.Instance();
-            var firstItem = (nint) agent + 0x368;
+            var firstItem = (nint) agent + 0x370;
 
             var items = new Dictionary<PlateSlot, SavedGlamourItem>();
 
@@ -131,3 +133,42 @@ namespace Glamaholic.Ui.Helpers {
         }
     }
 }
+
+/*
+AgentTryOn offsets:
+  
+Locate Client::UI::Agent::AgentTryon.TryOn
+
+Follow the call which passes an agent as the first argument and all original arguments afterward:
+    agent = Client::UI::Agent::AgentModule_GetAgentByInternalId(v14, 0x9BLL);
+    v16 = agent;
+    if ( !agent )
+        return 0;
+    if ( (*(*agent + 48LL))(agent) && *(v16 + 1752) == 0xE0000000 )
+        *(v16 + 856) = this;
+    else
+        sub_140A9E880(v16, this);
+    sub_140A9EDF0(v16, a2, a3, a4, a5, a6); // <--- this function is responsible for updating TryOn items
+
+You should find a block which iterates the item array:
+    if ( !*(a1 + 870) )
+    {
+        v13 = 0;
+        v14 = a1 + 880; // <-- 880 is the array base
+        while ( !*(v14 + 12) || *v14 >= 2u )
+        {
+        ++v13;
+        v14 += 28LL; // <- 28 is the element size
+        if ( v13 >= 14 ) // 14 is a constant - size of array / number of slots
+            goto LABEL_14;
+        }
+        if ( *(a1 + 838) )
+        {
+        *(a1 + 873) = 1;
+        *(a1 + 832) = 1;
+        *(a1 + 838) = 0;
+        }
+    LABEL_14:
+         sub_140A9F0E0(a1);
+    }
+*/
