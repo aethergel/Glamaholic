@@ -124,13 +124,15 @@ namespace Glamaholic {
 }
 
 /*
- * AgentTryOn "Save/Delete Outfit"
- * - Client::UI::Agent::AgentTryon_ReceiveEvent
- * - Condition around the YesNo dialog checks if the setting is already enabled
- * 
+AgentTryOn "Save/Delete Outfit"
+
+The script @ IDA/update.py should be used first. If the script is no longer working, then the information below can be used to update the toggle offset.
+
+Client::UI::Agent::AgentTryon_ReceiveEvent
+--
 case 0x11u:
    v38 = 0;
-   if ( *(a1 + 862) ) // <-- cmp [rbx+35Eh], bpl
+   if ( *(a1 + 862) ) // <-- cmp [rbx+35Eh], bpl (862 is offset)
    {
      v49 = *(a1 + 16);
      v50 = (*(*v49 + 48LL))(v49, *v49, &_ImageBase);
@@ -162,6 +164,6 @@ case 0x11u:
    }
    else
    {
-     *(a1 + 862) = 1; // <--
+     *(a1 + 862) = 1; // <-- (862 is offset)
    }
  */

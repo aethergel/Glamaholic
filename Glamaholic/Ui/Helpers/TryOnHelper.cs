@@ -136,6 +136,8 @@ namespace Glamaholic.Ui.Helpers {
 
 /*
 AgentTryOn offsets:
+
+The script @ IDA/update.py should be used first. If the script is no longer working, then the information below can be used to update the items offset.
   
 Locate Client::UI::Agent::AgentTryon.TryOn
 
@@ -159,7 +161,7 @@ You should find a block which iterates the item array:
         {
         ++v13;
         v14 += 28LL; // <- 28 is the element size
-        if ( v13 >= 14 ) // 14 is a constant - size of array / number of slots
+        if ( v13 >= 14 ) // 14 is the length of the array
             goto LABEL_14;
         }
         if ( *(a1 + 838) )
