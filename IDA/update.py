@@ -33,7 +33,15 @@ def FuncToInstrArray(ea: idaapi.ea_t) -> list[idaapi.insn_t]:
         rg = ranges.getrange(i)
         
         insn_ea = rg.start_ea
+        if not idaapi.is_code(idaapi.get_flags(insn_ea)):
+            continue
+
         while insn_ea < rg.end_ea:
+            # skip jump tables
+            if not idaapi.is_code(idaapi.get_flags(insn_ea)):
+                insn_ea += ida_bytes.get_item_size(insn_ea)
+                continue
+
             insn = idaapi.insn_t()
             insn_ea += idaapi.decode_insn(insn, insn_ea)
             instructions.append(insn)
@@ -53,12 +61,12 @@ def FindInsnSeq(instructions: list[idaapi.insn_t], pattern: list[int]) -> list[i
 
 def UpdateTryOnToggle():
     func = LocateFunc(
-        "Client::UI::Agent::AgentTryon_ReceiveEvent",
+        "Client::UI::Agent::AgentTryon.ReceiveEvent",
         "48 89 5C 24 ?? 56 57 41 54 41 55 41 57 48 81 EC B0 00 00 00 48 8B D9" # last updated: 7.3.1
     )
 
     if func == idaapi.BADADDR:
-        print("[TryOn Toggle] Error: could not find AgentTryon_ReceiveEvent")
+        print("[TryOn Toggle] Error: could not find AgentTryon.ReceiveEvent")
         return
 
     instructions = FuncToInstrArray(func)
