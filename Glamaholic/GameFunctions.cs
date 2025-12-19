@@ -75,9 +75,7 @@ namespace Glamaholic {
             //if (agent->Data->UsedSlots == _dresserItemSlotsUsed)
             //    return;
 
-            ushort* usedSlots = (ushort*) ((nint) agent->Data + 0x10B460);
-            if (*usedSlots == _dresserItemSlotsUsed)
-                return;
+            int usedSlots = agent->Data->UsedSlots;
 
             _cachedDresserItems.Clear();
             foreach (var item in agent->Data->PrismBoxItems) {
