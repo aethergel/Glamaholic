@@ -1,6 +1,7 @@
 using Glamaholic;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 internal class TreeUtils
 {
@@ -57,9 +58,135 @@ internal class TreeUtils
 
         // Perform the move
         sourceParent.RemoveAt(sourceIndex);
-        targetParent.Add(nodeToMove);
+        
+        // Insert at appropriate position (folders first, then at end of plates section)
+        int insertIndex = GetInsertIndexForNode(targetParent, nodeToMove);
+        targetParent.Insert(insertIndex, nodeToMove);
 
         return true;
+    }
+
+    public static bool MoveNodeToPosition(List<TreeNode> rootNodes, Guid nodeId, Guid targetNodeId, bool insertAfter) {
+        if (nodeId == targetNodeId)
+            return false;
+
+        // Find the node to move
+        var (sourceParent, sourceIndex) = FindNodeParent(rootNodes, nodeId);
+        if (sourceParent == null || sourceIndex == -1)
+            return false;
+
+        var nodeToMove = sourceParent[sourceIndex];
+
+        // Find target position
+        var (targetParent, targetIndex) = FindNodeParent(rootNodes, targetNodeId);
+        if (targetParent == null || targetIndex == -1)
+            return false;
+
+        var targetNode = targetParent[targetIndex];
+
+        // Prevent mixing folders and plates in invalid ways
+        bool movingFolder = nodeToMove is FolderNode;
+        bool targetIsFolder = targetNode is FolderNode;
+
+        // Remove from source first
+        sourceParent.RemoveAt(sourceIndex);
+
+        // Recalculate target index if we removed from the same parent before the target
+        if (sourceParent == targetParent && sourceIndex < targetIndex)
+            targetIndex--;
+
+        int insertIndex = insertAfter ? targetIndex + 1 : targetIndex;
+
+        // Keep folders at the top
+        if (movingFolder) {
+            // Folders can only be placed among other folders (at the top)
+            int lastFolderIndex = GetLastFolderIndex(targetParent);
+            if (insertIndex > lastFolderIndex + 1)
+                insertIndex = lastFolderIndex + 1;
+        } else {
+            // Plates can only be placed among other plates (after folders)
+            int firstPlateIndex = GetFirstPlateIndex(targetParent);
+            if (insertIndex < firstPlateIndex)
+                insertIndex = firstPlateIndex;
+        }
+
+        insertIndex = Math.Max(0, Math.Min(insertIndex, targetParent.Count));
+
+        targetParent.Insert(insertIndex, nodeToMove);
+        return true;
+    }
+
+    public static bool MoveNodeIntoFolder(List<TreeNode> rootNodes, Guid nodeId, Guid folderId) {
+        if (nodeId == folderId)
+            return false;
+
+        // Find the node to move
+        var (sourceParent, sourceIndex) = FindNodeParent(rootNodes, nodeId);
+        if (sourceParent == null || sourceIndex == -1)
+            return false;
+
+        var nodeToMove = sourceParent[sourceIndex];
+
+        // Find target folder
+        var targetFolder = FindNodeById(rootNodes, folderId) as FolderNode;
+        if (targetFolder == null)
+            return false;
+
+        // Remove from source
+        sourceParent.RemoveAt(sourceIndex);
+
+        int insertIndex = GetInsertIndexForNode(targetFolder.Children, nodeToMove);
+        targetFolder.Children.Insert(insertIndex, nodeToMove);
+
+        return true;
+    }
+
+    public static bool MoveNodeToRoot(List<TreeNode> rootNodes, Guid nodeId) {
+        // Find the node to move
+        var (sourceParent, sourceIndex) = FindNodeParent(rootNodes, nodeId);
+        if (sourceParent == null || sourceIndex == -1)
+            return false;
+
+        // Already at root
+        if (sourceParent == rootNodes)
+            return false;
+
+        var nodeToMove = sourceParent[sourceIndex];
+
+        // Remove from source
+        sourceParent.RemoveAt(sourceIndex);
+
+        // Insert at appropriate position in root
+        int insertIndex = GetInsertIndexForNode(rootNodes, nodeToMove);
+        rootNodes.Insert(insertIndex, nodeToMove);
+
+        return true;
+    }
+
+    private static int GetInsertIndexForNode(List<TreeNode> targetList, TreeNode nodeToInsert) {
+        if (nodeToInsert is FolderNode) {
+            // Insert at end of folders section
+            return GetLastFolderIndex(targetList) + 1;
+        } else {
+            // Insert at end of list (after all folders and plates)
+            return targetList.Count;
+        }
+    }
+
+    private static int GetLastFolderIndex(List<TreeNode> nodes) {
+        for (int i = nodes.Count - 1; i >= 0; i--) {
+            if (nodes[i] is FolderNode)
+                return i;
+        }
+        return -1;
+    }
+
+    private static int GetFirstPlateIndex(List<TreeNode> nodes) {
+        for (int i = 0; i < nodes.Count; i++) {
+            if (nodes[i] is PlateNode)
+                return i;
+        }
+        return nodes.Count;
     }
 
     public static bool RemoveNode(List<TreeNode> rootNodes, Guid id) {
@@ -134,20 +261,25 @@ internal class TreeUtils
         return null;
     }
 
-    public static void Sort(List<TreeNode> rootNodes)
+    public static void EnsureFoldersFirst(List<TreeNode> rootNodes)
     {
-        rootNodes.Sort((a, b) =>
-        {
-            bool aFolder = a is FolderNode;
-            bool bFolder = b is FolderNode;
-            if (aFolder && !bFolder) return -1;
-            if (!aFolder && bFolder) return 1;
-            return string.Compare(a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase);
-        });
+        // Separate folders and plates and maintain local order
+        var folders = rootNodes.Where(n => n is FolderNode).ToList();
+        var plates = rootNodes.Where(n => n is PlateNode).ToList();
+        
+        rootNodes.Clear();
+        rootNodes.AddRange(folders);
+        rootNodes.AddRange(plates);
 
         foreach (var node in rootNodes)
         {
-            if (node is FolderNode folder) Sort(folder.Children);
+            if (node is FolderNode folder)
+                EnsureFoldersFirst(folder.Children);
         }
+    }
+
+    public static void Sort(List<TreeNode> rootNodes)
+    {
+        EnsureFoldersFirst(rootNodes);
     }
 }

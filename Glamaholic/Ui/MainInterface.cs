@@ -125,7 +125,6 @@ namespace Glamaholic.Ui {
             if (ImGui.BeginMenu("Plates")) {
                 if (ImGui.MenuItem("New")) {
                     var id = this.Ui.Plugin.Config.AddPlate(new SavedPlate("Untitled Plate"));
-                    TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                     this.Ui.Plugin.SaveConfig();
                     this.SwitchPlate(id, true);
                 }
@@ -136,7 +135,6 @@ namespace Glamaholic.Ui {
                         var plate = JsonConvert.DeserializeObject<SharedPlate>(json);
                         if (plate != null) {
                             var id = this.Ui.Plugin.Config.AddPlate(plate.ToPlate());
-                            TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                             this.Ui.Plugin.SaveConfig();
                             this.Ui.SwitchPlate(id);
                         }
@@ -261,7 +259,6 @@ namespace Glamaholic.Ui {
                     case ECImportTarget.NewPlate:
                         import.Tags.Add("Eorzea Collection");
                         var id = this.Ui.Plugin.Config.AddPlate(import);
-                        TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                         this.Ui.Plugin.SaveConfig();
                         this.SwitchPlate(id, true);
                         break;
@@ -276,7 +273,6 @@ namespace Glamaholic.Ui {
         }
 
         private void DrawPlateList() {
-            // Begin outer child for the whole left panel
             if (!ImGui.BeginChild("plate list", new Vector2(205 * ImGuiHelpers.GlobalScale, 0), true)) {
                 return;
             }
@@ -292,8 +288,12 @@ namespace Glamaholic.Ui {
             float scrollAreaHeight = ImGui.GetContentRegionAvail().Y - buttonBarHeight;
             if (scrollAreaHeight < 50f) scrollAreaHeight = 50f;
 
+            // Drag & drop state
             Guid? pendingMoveNodeId = null;
-            Guid? pendingMoveTargetId = null; // null means move to root
+            Guid? pendingMoveTargetId = null;
+            bool pendingInsertAfter = false;
+            bool pendingMoveIntoFolder = false;
+            bool pendingMoveToRoot = false;
 
             List<(Guid nodeId, int? folderAction)> deferredActions = new();
 
@@ -307,30 +307,40 @@ namespace Glamaholic.Ui {
 
                             Guid? switchTo = null;
                             bool isSelected = this._selectedPlateId == node.Id;
+                            
+                            // Actual selectable item
                             if (ImGui.Selectable($"{new string(' ', depth * 2)}{leaf.Name}##{node.Id}", isSelected)) {
                                 switchTo = node.Id;
                             }
 
+                            // Drag source
                             if (ImGui.BeginDragDropSource()) {
+                                this._dragGuid = node.Id;
                                 unsafe {
-                                    var dragId = node.Id;
-                                    this._dragGuid = node.Id;
                                     ImGui.SetDragDropPayload("TREE_NODE", null, 0);
                                 }
-
                                 ImGui.Text($"Moving '{leaf.Name}'");
                                 ImGui.EndDragDropSource();
                             }
 
-                            // Allow drag-drop target for non-folder nodes (move to root)
+                            // Drop target
                             if (ImGui.BeginDragDropTarget()) {
-                                unsafe {
-                                    if (_dragGuid != null) {
-                                        Guid draggedNodeId = _dragGuid.Value;
-                                        if (draggedNodeId != node.Id) {
-                                            pendingMoveNodeId = draggedNodeId;
-                                            pendingMoveTargetId = null; // move to root
-                                        }
+                                var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
+                                if (_dragGuid != null && _dragGuid.Value != node.Id) {
+                                    Guid draggedNodeId = _dragGuid.Value;
+                                    var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
+                                    
+                                    // Only allow plates to be reordered among plates
+                                    if (draggedNode is PlateNode) {
+                                        // Check mouse position to determine if we insert before or after
+                                        var itemMin = ImGui.GetItemRectMin();
+                                        var itemMax = ImGui.GetItemRectMax();
+                                        var mouseY = ImGui.GetMousePos().Y;
+                                        var midY = (itemMin.Y + itemMax.Y) / 2;
+                                        
+                                        pendingMoveNodeId = draggedNodeId;
+                                        pendingMoveTargetId = node.Id;
+                                        pendingInsertAfter = mouseY > midY;
                                     }
                                 }
                                 ImGui.EndDragDropTarget();
@@ -380,179 +390,108 @@ namespace Glamaholic.Ui {
                             string folderPath = parentPath + "/" + folder.Name;
                             ImGui.PushID(folderPath);
 
-                            if (ImGui.TreeNodeEx($"{folder.Name}")) {
-                                // Add drag source for expanded folders
-                                if (ImGui.BeginDragDropSource()) {
-                                    unsafe {
-                                        var dragId = node.Id;
-                                        this._dragGuid = node.Id;
-                                        ImGui.SetDragDropPayload("TREE_NODE", null, 0);
-                                    }
-
-                                    ImGui.Text($"Moving folder '{folder.Name}'");
-                                    ImGui.EndDragDropSource();
+                            bool isOpen = ImGui.TreeNodeEx($"{folder.Name}");
+                            
+                            // Drag source for folders
+                            if (ImGui.BeginDragDropSource()) {
+                                this._dragGuid = node.Id;
+                                unsafe {
+                                    ImGui.SetDragDropPayload("TREE_NODE", null, 0);
                                 }
+                                ImGui.Text($"Moving folder '{folder.Name}'");
+                                ImGui.EndDragDropSource();
+                            }
 
-                                if (ImGui.BeginDragDropTarget()) {
-                                    unsafe {
-                                        var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                                        if (_dragGuid != null) {
-                                            Guid draggedNodeId = _dragGuid.Value;
-                                            if (draggedNodeId != node.Id) {
-                                                // Prevent dropping a folder into itself or its descendants
-                                                var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
-                                                bool isValidDrop = true;
-                                                
-                                                if (draggedNode is FolderNode draggedFolder) {
-                                                    isValidDrop = !IsDescendantOf(this.Ui.Plugin.Config.Plates, node.Id, draggedNodeId);
-                                                }
-                                                
-                                                if (isValidDrop) {
-                                                    pendingMoveNodeId = draggedNodeId;
-                                                    pendingMoveTargetId = node.Id;
-                                                }
-                                            }
+                            // Drop target for folders
+                            if (ImGui.BeginDragDropTarget()) {
+                                var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
+                                if (_dragGuid != null && _dragGuid.Value != node.Id) {
+                                    Guid draggedNodeId = _dragGuid.Value;
+                                    var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
+                                    bool isValidDrop = true;
+                                    
+                                    // Prevent dropping a folder into itself or its descendants
+                                    if (draggedNode is FolderNode) {
+                                        isValidDrop = !IsDescendantOf(this.Ui.Plugin.Config.Plates, node.Id, draggedNodeId);
+                                    }
+                                    
+                                    if (isValidDrop) {
+                                        // Reorder folders or move into folder
+                                        var itemMin = ImGui.GetItemRectMin();
+                                        var itemMax = ImGui.GetItemRectMax();
+                                        var mouseY = ImGui.GetMousePos().Y;
+                                        var itemHeight = itemMax.Y - itemMin.Y;
+                                        
+                                        if (draggedNode is FolderNode) {
+                                            // Folders can be reordered among folders
+                                            var midY = (itemMin.Y + itemMax.Y) / 2;
+                                            pendingMoveNodeId = draggedNodeId;
+                                            pendingMoveTargetId = node.Id;
+                                            pendingInsertAfter = mouseY > midY;
+                                        } else {
+                                            // Plates dropped on folders go into the folder
+                                            pendingMoveNodeId = draggedNodeId;
+                                            pendingMoveTargetId = node.Id;
+                                            pendingMoveIntoFolder = true;
                                         }
                                     }
-                                    ImGui.EndDragDropTarget();
+                                }
+                                ImGui.EndDragDropTarget();
+                            }
+
+                            // Right-click context menu for folder node
+                            if (ImGui.BeginPopupContextItem($"folder-node-context-{node.Id}")) {
+                                if (ImGui.MenuItem("Delete Folder (and all contents)")) {
+                                    _contextMenuNodeId = node.Id;
+                                    _pendingFolderAction = 0;
+                                    _confirmDeleteFolder = true;
                                 }
 
-                                // Right-click context menu for folder node
-                                if (ImGui.BeginPopupContextItem($"folder-node-context-{node.Id}")) {
-                                    if (ImGui.MenuItem("Delete Folder (and all contents)")) {
-                                        _contextMenuNodeId = node.Id;
-                                        _pendingFolderAction = 0;
-                                        _confirmDeleteFolder = true;
-                                    }
-
-                                    if (ImGui.MenuItem("Delete Folder (move contents out)")) {
-                                        _contextMenuNodeId = node.Id;
-                                        _pendingFolderAction = 1;
-                                        _confirmDeleteFolder = true;
-                                    }
-
-                                    ImGui.EndPopup();
+                                if (ImGui.MenuItem("Delete Folder (move contents out)")) {
+                                    _contextMenuNodeId = node.Id;
+                                    _pendingFolderAction = 1;
+                                    _confirmDeleteFolder = true;
                                 }
 
-                                if (_confirmDeleteFolder && _contextMenuNodeId == node.Id) {
-                                    ImGui.OpenPopup($"confirm-delete-folder-{node.Id}");
+                                ImGui.EndPopup();
+                            }
+
+                            if (_confirmDeleteFolder && _contextMenuNodeId == node.Id) {
+                                ImGui.OpenPopup($"confirm-delete-folder-{node.Id}");
+                            }
+
+                            if (ImGui.BeginPopup($"confirm-delete-folder-{node.Id}")) {
+                                if (_pendingFolderAction == 0) {
+                                    ImGui.TextUnformatted("Delete this folder and ALL its contents? This cannot be undone.");
+                                } else {
+                                    ImGui.TextUnformatted("Delete this folder and move all contents out?");
                                 }
 
-                                if (ImGui.BeginPopup($"confirm-delete-folder-{node.Id}")) {
-                                    if (_pendingFolderAction == 0) {
-                                        ImGui.TextUnformatted("Delete this folder and ALL its contents? This cannot be undone.");
-                                    } else {
-                                        ImGui.TextUnformatted("Delete this folder and move all contents out?");
-                                    }
-
-                                    if (ImGui.Button("Delete")) {
-                                        deferredActions.Add((node.Id, _pendingFolderAction));
-                                        _confirmDeleteFolder = false;
-                                        _contextMenuNodeId = null;
-                                        _pendingFolderAction = null;
-                                        ImGui.CloseCurrentPopup();
-                                    }
-
-                                    ImGui.SameLine();
-
-                                    if (ImGui.Button("Cancel")) {
-                                        _confirmDeleteFolder = false;
-                                        _contextMenuNodeId = null;
-                                        _pendingFolderAction = null;
-                                        ImGui.CloseCurrentPopup();
-                                    }
-
-                                    ImGui.EndPopup();
+                                if (ImGui.Button("Delete")) {
+                                    deferredActions.Add((node.Id, _pendingFolderAction));
+                                    _confirmDeleteFolder = false;
+                                    _contextMenuNodeId = null;
+                                    _pendingFolderAction = null;
+                                    ImGui.CloseCurrentPopup();
                                 }
 
+                                ImGui.SameLine();
+
+                                if (ImGui.Button("Cancel")) {
+                                    _confirmDeleteFolder = false;
+                                    _contextMenuNodeId = null;
+                                    _pendingFolderAction = null;
+                                    ImGui.CloseCurrentPopup();
+                                }
+
+                                ImGui.EndPopup();
+                            }
+
+                            if (isOpen) {
                                 if (folder.Children.Count > 0) {
                                     DrawPlateNodes(folder.Children, depth + 1, folderPath);
                                 }
-
                                 ImGui.TreePop();
-                            } else {
-                                // Add drag source for collapsed folders
-                                if (ImGui.BeginDragDropSource()) {
-                                    unsafe {
-                                        var dragId = node.Id;
-                                        ImGui.SetDragDropPayload("TREE_NODE", null, 0);
-                                    }
-
-                                    ImGui.Text($"Moving folder '{folder.Name}'");
-                                    ImGui.EndDragDropSource();
-                                }
-
-                                // Still allow drag-drop on collapsed folders
-                                if (ImGui.BeginDragDropTarget()) {
-                                    unsafe {
-                                        var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                                        if (_dragGuid != null) {
-                                            Guid draggedNodeId = _dragGuid.Value;
-                                            if (draggedNodeId != node.Id) {
-                                                // Prevent dropping a folder into itself or its descendants
-                                                var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
-                                                bool isValidDrop = true;
-                                                
-                                                if (draggedNode is FolderNode draggedFolder) {
-                                                    isValidDrop = !IsDescendantOf(this.Ui.Plugin.Config.Plates, node.Id, draggedNodeId);
-                                                }
-                                                
-                                                if (isValidDrop) {
-                                                    pendingMoveNodeId = draggedNodeId;
-                                                    pendingMoveTargetId = node.Id;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    ImGui.EndDragDropTarget();
-                                }
-
-                                // Right-click context menu for collapsed folder
-                                if (ImGui.BeginPopupContextItem($"folder-node-context-{node.Id}")) {
-                                    if (ImGui.MenuItem("Delete Folder (and all contents)")) {
-                                        _contextMenuNodeId = node.Id;
-                                        _pendingFolderAction = 0;
-                                        _confirmDeleteFolder = true;
-                                    }
-                                    if (ImGui.MenuItem("Delete Folder (move contents out)")) {
-                                        _contextMenuNodeId = node.Id;
-                                        _pendingFolderAction = 1;
-                                        _confirmDeleteFolder = true;
-                                    }
-
-                                    ImGui.EndPopup();
-                                }
-
-                                if (_confirmDeleteFolder && _contextMenuNodeId == node.Id) {
-                                    ImGui.OpenPopup($"confirm-delete-folder-{node.Id}");
-                                }
-
-                                if (ImGui.BeginPopup($"confirm-delete-folder-{node.Id}")) {
-                                    if (_pendingFolderAction == 0) {
-                                        ImGui.TextUnformatted("Delete this folder and ALL its contents? This cannot be undone.");
-                                    } else {
-                                        ImGui.TextUnformatted("Delete this folder and move all contents out?");
-                                    }
-
-                                    if (ImGui.Button("Delete")) {
-                                        deferredActions.Add((node.Id, _pendingFolderAction));
-                                        _confirmDeleteFolder = false;
-                                        _contextMenuNodeId = null;
-                                        _pendingFolderAction = null;
-                                        ImGui.CloseCurrentPopup();
-                                    }
-
-                                    ImGui.SameLine();
-
-                                    if (ImGui.Button("Cancel")) {
-                                        _confirmDeleteFolder = false;
-                                        _contextMenuNodeId = null;
-                                        _pendingFolderAction = null;
-                                        ImGui.CloseCurrentPopup();
-                                    }
-
-                                    ImGui.EndPopup();
-                                }
                             }
 
                             ImGui.PopID();
@@ -562,34 +501,43 @@ namespace Glamaholic.Ui {
 
                 DrawPlateNodes(this.Ui.Plugin.Config.Plates);
 
-                // Add drag-drop target for root (below the tree)
+                // Add invisible drop target for moving to root (at the end of the list)
+                ImGui.Dummy(new Vector2(ImGui.GetContentRegionAvail().X, 20));
                 if (ImGui.BeginDragDropTarget()) {
-                    unsafe {
-                        var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
-                        if (_dragGuid != null) {
-                            Guid draggedNodeId = _dragGuid.Value;
-                            pendingMoveNodeId = draggedNodeId;
-                            pendingMoveTargetId = null; // move to root
-                        }
+                    var payload = ImGui.AcceptDragDropPayload("TREE_NODE");
+                    if (_dragGuid != null) {
+                        Guid draggedNodeId = _dragGuid.Value;
+                        pendingMoveNodeId = draggedNodeId;
+                        pendingMoveToRoot = true;
                     }
                     ImGui.EndDragDropTarget();
                 }
 
-                if (!ImGui.IsMouseDown(ImGuiMouseButton.Left) && this._dragging != -1) {
-                    this._dragging = -1;
-                    this.Ui.Plugin.SaveConfig();
+                // Clear drag guid when mouse is released
+                if (!ImGui.IsMouseDown(ImGuiMouseButton.Left)) {
+                    this._dragGuid = null;
+                    if (this._dragging != -1) {
+                        this._dragging = -1;
+                        this.Ui.Plugin.SaveConfig();
+                    }
                 }
 
                 ImGui.EndChild();
             }
 
-            // Process deferred actions using new TreeUtils
+            // Process drag & drop moves
             if (pendingMoveNodeId.HasValue) {
-                TreeUtils.MoveNodeToFolder(this.Ui.Plugin.Config.Plates, pendingMoveNodeId.Value, pendingMoveTargetId);
-                TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
+                if (pendingMoveToRoot) {
+                    TreeUtils.MoveNodeToRoot(this.Ui.Plugin.Config.Plates, pendingMoveNodeId.Value);
+                } else if (pendingMoveIntoFolder && pendingMoveTargetId.HasValue) {
+                    TreeUtils.MoveNodeIntoFolder(this.Ui.Plugin.Config.Plates, pendingMoveNodeId.Value, pendingMoveTargetId.Value);
+                } else if (pendingMoveTargetId.HasValue) {
+                    TreeUtils.MoveNodeToPosition(this.Ui.Plugin.Config.Plates, pendingMoveNodeId.Value, pendingMoveTargetId.Value, pendingInsertAfter);
+                }
                 this.Ui.Plugin.SaveConfig();
             }
 
+            // Process deferred delete actions
             if (deferredActions.Count > 0) {
                 foreach (var (nodeId, folderAction) in deferredActions) {
                     if (folderAction == null) {
@@ -609,7 +557,6 @@ namespace Glamaholic.Ui {
                     }
                 }
 
-                TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                 this.Ui.Plugin.SaveConfig();
             }
 
@@ -622,7 +569,6 @@ namespace Glamaholic.Ui {
             ImGui.PushItemWidth(-1);
             if (Util.IconButton(FontAwesomeIcon.Plus, tooltip: "New Plate")) {
                 var id = this.Ui.Plugin.Config.AddPlate(new SavedPlate("Untitled Plate"));
-                TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                 this.Ui.Plugin.SaveConfig();
                 this.SwitchPlate(id, true);
             }
@@ -647,22 +593,20 @@ namespace Glamaholic.Ui {
                 ImGui.SetNextItemWidth(-1);
                 if (ImGui.InputText("##new-folder-name", ref _newFolderName, 128, ImGuiInputTextFlags.EnterReturnsTrue)) {
                     if (!string.IsNullOrWhiteSpace(_newFolderName)) {
-                        this.Ui.Plugin.Config.Plates.Add(new FolderNode {
+                        this.Ui.Plugin.Config.Plates.Insert(0, new FolderNode {
                             Name = _newFolderName.Trim(),
                             Children = new List<TreeNode>()
                         });
-                        TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                         this.Ui.Plugin.SaveConfig();
                         ImGui.CloseCurrentPopup();
                     }
                 }
 
                 if (ImGui.Button("Create") && !string.IsNullOrWhiteSpace(_newFolderName)) {
-                    this.Ui.Plugin.Config.Plates.Add(new FolderNode {
+                    this.Ui.Plugin.Config.Plates.Insert(0, new FolderNode {
                         Name = _newFolderName.Trim(),
                         Children = new List<TreeNode>()
                     });
-                    TreeUtils.Sort(this.Ui.Plugin.Config.Plates);
                     this.Ui.Plugin.SaveConfig();
                     ImGui.CloseCurrentPopup();
                 }

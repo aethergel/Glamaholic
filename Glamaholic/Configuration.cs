@@ -111,10 +111,10 @@ namespace Glamaholic {
 
         internal Guid AddPlate(SavedPlate plate) {
             SanitisePlate(plate);
-            // Add as a leaf node at root
+            // Add as a leaf node at root (after all folders)
             var node = new PlateNode(plate);
             this.Plates.Add(node);
-            TreeUtils.Sort(this.Plates);
+            TreeUtils.EnsureFoldersFirst(this.Plates);
 
             return node.Id;
         }
