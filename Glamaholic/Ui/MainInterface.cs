@@ -1216,6 +1216,11 @@ namespace Glamaholic.Ui {
                 
                 if (ImGui.Button("Try On") && Service.ObjectTable.LocalPlayer != null)
                     Interop.Glamourer.TryOn(Service.ObjectTable.LocalPlayer!.ObjectIndex, plate);
+
+                ImGui.SameLine();
+
+                if (ImGui.Button("Revert") && Service.ObjectTable.LocalPlayer != null)
+                    Interop.Glamourer.RevertState(Service.ObjectTable.LocalPlayer!.ObjectIndex);
             }
 
             ImGui.NewLine();

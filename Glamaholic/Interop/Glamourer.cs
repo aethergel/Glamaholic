@@ -39,6 +39,16 @@ namespace Glamaholic.Interop {
             } catch (Exception) { }
         }
 
+        public static void RevertState(int playerIndex) {
+            if (!IsAvailable()) return;
+
+            try {
+                Service.Framework.Run(() => {
+                    _RevertState.Invoke(playerIndex, flags: ApplyFlag.Equipment);
+                });
+            } catch (Exception) { }
+        }
+
         private static ApiEquipSlot ConvertSlot(PlateSlot slot) {
             switch (slot) {
                 case PlateSlot.LeftRing:
