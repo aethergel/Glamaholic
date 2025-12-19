@@ -42,7 +42,7 @@ namespace Glamaholic {
     // Custom JsonConverter for TreeNode
     internal class TreeNodeConverter : JsonConverter<TreeNode>
     {
-        public override TreeNode ReadJson(JsonReader reader, Type objectType, TreeNode existingValue, bool hasExistingValue, JsonSerializer serializer)
+        public override TreeNode ReadJson(JsonReader reader, Type objectType, TreeNode? existingValue, bool hasExistingValue, JsonSerializer serializer)
         {
             var jo = JObject.Load(reader);
             var nodeType = jo["NodeType"]?.ToString();
@@ -61,7 +61,7 @@ namespace Glamaholic {
             return node;
         }
 
-        public override void WriteJson(JsonWriter writer, TreeNode value, JsonSerializer serializer)
+        public override void WriteJson(JsonWriter writer, TreeNode? value, JsonSerializer serializer)
         {
             JObject jo = new();
             if (value is FolderNode folder)
@@ -79,7 +79,7 @@ namespace Glamaholic {
             }
             else
             {
-                throw new JsonSerializationException($"Unknown node type: {value.GetType()}");
+                throw new JsonSerializationException($"Unknown node type: {(value != null ? value.GetType() : "null")}");
             }
             jo.WriteTo(writer);
         }
@@ -227,7 +227,7 @@ namespace Glamaholic {
     // Converter for List<TreeNode>
     internal class TreeNodeListConverter : JsonConverter<List<TreeNode>>
     {
-        public override List<TreeNode> ReadJson(JsonReader reader, Type objectType, List<TreeNode> existingValue, bool hasExistingValue, JsonSerializer serializer)
+        public override List<TreeNode> ReadJson(JsonReader reader, Type objectType, List<TreeNode>? existingValue, bool hasExistingValue, JsonSerializer serializer)
         {
             var array = JArray.Load(reader);
             var result = new List<TreeNode>();
@@ -240,8 +240,14 @@ namespace Glamaholic {
             return result;
         }
 
-        public override void WriteJson(JsonWriter writer, List<TreeNode> value, JsonSerializer serializer)
+        public override void WriteJson(JsonWriter writer, List<TreeNode>? value, JsonSerializer serializer)
         {
+            if (value == null)
+            {
+                writer.WriteNull();
+                return;
+            }
+
             writer.WriteStartArray();
             foreach (var node in value)
             {

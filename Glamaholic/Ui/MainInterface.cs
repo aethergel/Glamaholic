@@ -4,7 +4,6 @@ using Dalamud.Interface;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
 using Glamaholic.Interop;
-using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Newtonsoft.Json;
@@ -235,13 +234,13 @@ namespace Glamaholic.Ui {
         }
 
         private void ImportEorzeaCollection(string url, ECImportTarget target) {
-            if (!IsValidEorzeaCollectionUrl(url) || Service.ClientState.LocalPlayer == null) {
+            if (!IsValidEorzeaCollectionUrl(url) || Service.ObjectTable.LocalPlayer == null) {
                 return;
             }
 
             this._ecImporting = true;
 
-            int playerIndex = Service.ClientState.LocalPlayer.ObjectIndex;
+            int playerIndex = Service.ObjectTable.LocalPlayer.ObjectIndex;
 
             Task.Run(async () => {
                 var import = await EorzeaCollection.ImportFromURL(url);
@@ -1214,9 +1213,9 @@ namespace Glamaholic.Ui {
                 ImGui.NewLine();
                 ImGui.TextUnformatted("Glamourer");
                 SeparatorHack();
-
-                if (ImGui.Button("Try On") && Service.ClientState.LocalPlayer != null)
-                    Interop.Glamourer.TryOn(Service.ClientState.LocalPlayer!.ObjectIndex, plate);
+                
+                if (ImGui.Button("Try On") && Service.ObjectTable.LocalPlayer != null)
+                    Interop.Glamourer.TryOn(Service.ObjectTable.LocalPlayer!.ObjectIndex, plate);
             }
 
             ImGui.NewLine();

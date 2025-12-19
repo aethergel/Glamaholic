@@ -57,14 +57,14 @@ namespace Glamaholic.Ui.Helpers {
         }
 
         private void TryOnGlamourer(bool withEmperor) {
-            if (Service.ClientState.LocalPlayer == null) return;
+            if (Service.ObjectTable.LocalPlayer == null) return;
             var plate = new SavedPlate("Glamourer") {
                 Items = GetTryOnItems(),
                 FillWithNewEmperor = withEmperor
             };
 
             Configuration.SanitisePlate(plate);
-            Interop.Glamourer.TryOn(Service.ClientState.LocalPlayer.ObjectIndex, plate);
+            Interop.Glamourer.TryOn(Service.ObjectTable.LocalPlayer.ObjectIndex, plate);
         }
 
         private static unsafe Dictionary<PlateSlot, SavedGlamourItem> GetTryOnItems() {
