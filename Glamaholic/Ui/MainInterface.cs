@@ -449,6 +449,8 @@ namespace Glamaholic.Ui {
                                     _folderRenameInput = folder.Name;
                                 }
 
+                                ImGui.Separator();
+
                                 if (ImGui.MenuItem("Delete Folder (and all contents)")) {
                                     _contextMenuNodeId = node.Id;
                                     _pendingFolderAction = 0;
