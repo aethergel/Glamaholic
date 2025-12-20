@@ -591,16 +591,20 @@ namespace Glamaholic.Ui {
             if (ImGui.BeginPopup("new-folder-popup")) {
                 ImGui.TextUnformatted("Folder Name:");
                 ImGui.SetNextItemWidth(-1);
-                if (ImGui.InputText("##new-folder-name", ref _newFolderName, 128, ImGuiInputTextFlags.EnterReturnsTrue)) {
-                    if (!string.IsNullOrWhiteSpace(_newFolderName)) {
-                        this.Ui.Plugin.Config.Plates.Insert(0, new FolderNode {
-                            Name = _newFolderName.Trim(),
-                            Children = new List<TreeNode>()
-                        });
-                        this.Ui.Plugin.SaveConfig();
-                        ImGui.CloseCurrentPopup();
-                    }
-                }
+
+                // Caitlyn: Dalamud API 14 broke EnterReturnsTrue. Once that's fixed, this should be restored.
+                //if (ImGui.InputText("##new-folder-name", ref _newFolderName, 128, ImGuiInputTextFlags.EnterReturnsTrue)) {
+                //    if (!string.IsNullOrWhiteSpace(_newFolderName)) {
+                //        this.Ui.Plugin.Config.Plates.Insert(0, new FolderNode {
+                //            Name = _newFolderName.Trim(),
+                //            Children = new List<TreeNode>()
+                //        });
+                //        this.Ui.Plugin.SaveConfig();
+                //        ImGui.CloseCurrentPopup();
+                //    }
+                //}
+
+                ImGui.InputText("##new-folder-name", ref _newFolderName, 128);
 
                 if (ImGui.Button("Create") && !string.IsNullOrWhiteSpace(_newFolderName)) {
                     this.Ui.Plugin.Config.Plates.Insert(0, new FolderNode {
