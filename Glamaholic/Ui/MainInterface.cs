@@ -1348,6 +1348,15 @@ namespace Glamaholic.Ui {
                 if (Interop.Glamourer.IsAvailable()) {
                     ImGui.SameLine();
                     ImGui.RadioButton("Try On (Glamourer)", ref this._massImportTarget, 2);
+
+                    if (this._massImportTarget == 2) {
+                        ImGui.Separator();
+
+                        if (ImGui.Button("Revert Glamourer")) {
+                            if (Service.ObjectTable.LocalPlayer != null)
+                                Interop.Glamourer.RevertState(Service.ObjectTable.LocalPlayer.ObjectIndex);
+                        }
+                    }
                 }
             }
 
