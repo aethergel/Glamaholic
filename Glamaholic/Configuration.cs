@@ -100,6 +100,11 @@ namespace Glamaholic {
         public bool ItemFilterShowObtainedOnly;
         public bool TroubleshootingMode = false;
 
+        /// <summary>
+        /// The last changelog version the user has seen. Stored as a string for JSON serialization.
+        /// </summary>
+        public string? LastSeenChangelogVersion { get; set; } = null;
+
         internal static void SanitisePlate(SavedPlate plate) {
             var valid = Enum.GetValues<PlateSlot>();
             foreach (var slot in plate.Items.Keys.ToArray()) {

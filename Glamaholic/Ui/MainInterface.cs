@@ -77,6 +77,11 @@ namespace Glamaholic.Ui {
 
         private Guid? _dragGuid = null;
 
+        // Changelog state
+        private bool _showChangelog = false;
+        private List<Changelog.ChangelogEntry>? _changelogEntries = null;
+        private bool _changelogChecked = false;
+
         internal MainInterface(PluginUi ui) {
             this.Ui = ui;
         }
@@ -95,8 +100,17 @@ namespace Glamaholic.Ui {
             if (this._massImport)
                 this.DrawMassImportWindow();
 
+            if (this._showChangelog)
+                this.DrawChangelog();
+
             if (!this._visible) {
                 return;
+            }
+
+            // Check for new changelog entries on first open
+            if (!this._changelogChecked) {
+                this._changelogChecked = true;
+                this.CheckForNewChangelog();
             }
 
             ImGui.SetNextWindowSize(new Vector2(415, 650), ImGuiCond.FirstUseEver);
@@ -196,6 +210,15 @@ namespace Glamaholic.Ui {
                     ImGui.PopTextWrapPos();
 
                     ImGui.EndMenu();
+                }
+
+                ImGui.Separator();
+
+                if (ImGui.MenuItem("View Changelog")) {
+                    this._changelogEntries = Changelog.Entries
+                        .OrderByDescending(e => e.Version)
+                        .ToList();
+                    this._showChangelog = true;
                 }
 
                 ImGui.EndMenu();
@@ -309,7 +332,7 @@ namespace Glamaholic.Ui {
 
                             Guid? switchTo = null;
                             bool isSelected = this._selectedPlateId == node.Id;
-                            
+
                             // Actual selectable item
                             if (ImGui.Selectable($"{new string(' ', depth * 2)}{leaf.Name}##{node.Id}", isSelected)) {
                                 switchTo = node.Id;
@@ -331,7 +354,7 @@ namespace Glamaholic.Ui {
                                 if (_dragGuid != null && _dragGuid.Value != node.Id) {
                                     Guid draggedNodeId = _dragGuid.Value;
                                     var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
-                                    
+
                                     // Only allow plates to be reordered among plates
                                     if (draggedNode is PlateNode) {
                                         // Check mouse position to determine if we insert before or after
@@ -339,7 +362,7 @@ namespace Glamaholic.Ui {
                                         var itemMax = ImGui.GetItemRectMax();
                                         var mouseY = ImGui.GetMousePos().Y;
                                         var midY = (itemMin.Y + itemMax.Y) / 2;
-                                        
+
                                         pendingMoveNodeId = draggedNodeId;
                                         pendingMoveTargetId = node.Id;
                                         pendingInsertAfter = mouseY > midY;
@@ -393,7 +416,7 @@ namespace Glamaholic.Ui {
                             ImGui.PushID(folderPath);
 
                             bool isOpen = ImGui.TreeNodeEx($"{folder.Name}");
-                            
+
                             // Drag source for folders
                             if (ImGui.BeginDragDropSource()) {
                                 this._dragGuid = node.Id;
@@ -411,19 +434,19 @@ namespace Glamaholic.Ui {
                                     Guid draggedNodeId = _dragGuid.Value;
                                     var draggedNode = TreeUtils.FindNodeById(this.Ui.Plugin.Config.Plates, draggedNodeId);
                                     bool isValidDrop = true;
-                                    
+
                                     // Prevent dropping a folder into itself or its descendants
                                     if (draggedNode is FolderNode) {
                                         isValidDrop = !IsDescendantOf(this.Ui.Plugin.Config.Plates, node.Id, draggedNodeId);
                                     }
-                                    
+
                                     if (isValidDrop) {
                                         // Reorder folders or move into folder
                                         var itemMin = ImGui.GetItemRectMin();
                                         var itemMax = ImGui.GetItemRectMax();
                                         var mouseY = ImGui.GetMousePos().Y;
                                         var itemHeight = itemMax.Y - itemMin.Y;
-                                        
+
                                         if (draggedNode is FolderNode) {
                                             // Folders can be reordered among folders
                                             var midY = (itemMin.Y + itemMax.Y) / 2;
@@ -1205,7 +1228,7 @@ namespace Glamaholic.Ui {
                 ImGui.NewLine();
                 ImGui.TextUnformatted("Glamourer");
                 SeparatorHack();
-                
+
                 if (ImGui.Button("Try On") && Service.ObjectTable.LocalPlayer != null)
                     Interop.Glamourer.TryOn(Service.ObjectTable.LocalPlayer!.ObjectIndex, plate);
 
@@ -1384,6 +1407,8 @@ namespace Glamaholic.Ui {
             if (ImGui.Button("Close")) {
                 this._massImport = false;
             }
+
+            ImGui.End();
         }
 
         private void HandleTimers() {
@@ -1530,6 +1555,76 @@ namespace Glamaholic.Ui {
                     return true;
             }
             return false;
+        }
+
+        private void CheckForNewChangelog() {
+            Version? lastSeen = null;
+            if (!string.IsNullOrEmpty(this.Ui.Plugin.Config.LastSeenChangelogVersion)) {
+                Version.TryParse(this.Ui.Plugin.Config.LastSeenChangelogVersion, out lastSeen);
+            }
+
+            this._changelogEntries = Changelog.GetEntriesSince(lastSeen);
+            if (this._changelogEntries.Count > 0) {
+                this._showChangelog = true;
+            }
+        }
+
+        private void DrawChangelog() {
+            var displaySize = ImGui.GetIO().DisplaySize;
+            var windowSize = new Vector2(450, 400);
+            var windowPos = (displaySize - windowSize) / 2;
+
+            ImGui.SetNextWindowPos(windowPos, ImGuiCond.Appearing);
+            ImGui.SetNextWindowSize(windowSize, ImGuiCond.Appearing);
+
+            if (!ImGui.Begin("What's New in Glamaholic", ref this._showChangelog, ImGuiWindowFlags.NoCollapse)) {
+                ImGui.End();
+                return;
+            }
+
+            if (this._changelogEntries == null || this._changelogEntries.Count == 0) {
+                ImGui.TextUnformatted("No new changes.");
+            } else {
+                ImGui.TextUnformatted("Recent changes since you last opened Glamaholic");
+                ImGui.Separator();
+                ImGui.NewLine();
+
+                float footerHeight = ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ItemSpacing.Y * 2;
+                if (ImGui.BeginChild("changelog-content", new Vector2(0, -footerHeight), false)) {
+                    foreach (var entry in this._changelogEntries) {
+                        ImGui.PushStyleColor(ImGuiCol.Text, ImGuiColors.DalamudOrange);
+                        ImGui.TextUnformatted($"Version {entry.Version}");
+                        ImGui.PopStyleColor();
+
+                        foreach (var change in entry.Changes) {
+                            ImGui.Bullet();
+                            ImGui.SameLine();
+                            Util.TextUnformattedWrapped(change);
+                        }
+
+                        ImGui.NewLine();
+                    }
+
+                    ImGui.EndChild();
+                }
+            }
+
+            ImGui.Separator();
+            if (ImGui.Button("Close")) {
+                this.CloseChangelog();
+            }
+
+            ImGui.End();
+        }
+
+        private void CloseChangelog() {
+            this._showChangelog = false;
+
+            var latestVersion = Changelog.GetLatestVersion();
+            if (latestVersion != null) {
+                this.Ui.Plugin.Config.LastSeenChangelogVersion = latestVersion.ToString();
+                this.Ui.Plugin.SaveConfig();
+            }
         }
     }
 }
