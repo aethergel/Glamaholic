@@ -66,12 +66,14 @@ namespace Glamaholic.Ui {
         private string _massImportLastURL = string.Empty;
         private string _massImportMessage = string.Empty;
         private int _massImportTarget = 0;
-        private string _newFolderName = string.Empty;
+        private string _newFolderNameInput = string.Empty;
 
         private Guid? _contextMenuNodeId = null;
         private bool _confirmDeleteNode = false;
         private bool _confirmDeleteFolder = false;
         private int? _pendingFolderAction = null; // 0 = delete all, 1 = move out
+        private bool _showFolderRename = false;
+        private string _folderRenameInput = string.Empty;
 
         private Guid? _dragGuid = null;
 
@@ -441,6 +443,12 @@ namespace Glamaholic.Ui {
 
                             // Right-click context menu for folder node
                             if (ImGui.BeginPopupContextItem($"folder-node-context-{node.Id}")) {
+                                if (ImGui.MenuItem("Rename")) {
+                                    _contextMenuNodeId = node.Id;
+                                    _showFolderRename = true;
+                                    _folderRenameInput = folder.Name;
+                                }
+
                                 if (ImGui.MenuItem("Delete Folder (and all contents)")) {
                                     _contextMenuNodeId = node.Id;
                                     _pendingFolderAction = 0;
@@ -481,6 +489,40 @@ namespace Glamaholic.Ui {
                                     _confirmDeleteFolder = false;
                                     _contextMenuNodeId = null;
                                     _pendingFolderAction = null;
+                                    ImGui.CloseCurrentPopup();
+                                }
+
+                                ImGui.EndPopup();
+                            }
+
+                            // Folder rename popup
+                            if (_showFolderRename && _contextMenuNodeId == node.Id) {
+                                ImGui.OpenPopup($"rename-folder-{node.Id}");
+                            }
+
+                            if (ImGui.BeginPopup($"rename-folder-{node.Id}")) {
+                                ImGui.TextUnformatted("Rename Folder:");
+                                ImGui.SetNextItemWidth(250);
+
+                                if (ImGui.IsWindowAppearing()) {
+                                    ImGui.SetKeyboardFocusHere();
+                                }
+
+                                ImGui.InputText("##folder-rename-input", ref _folderRenameInput, 128);
+
+                                if (ImGui.Button("Rename") && !string.IsNullOrWhiteSpace(_folderRenameInput)) {
+                                    folder.Name = _folderRenameInput.Trim();
+                                    this.Ui.Plugin.SaveConfig();
+                                    _showFolderRename = false;
+                                    _contextMenuNodeId = null;
+                                    ImGui.CloseCurrentPopup();
+                                }
+
+                                ImGui.SameLine();
+
+                                if (ImGui.Button("Cancel")) {
+                                    _showFolderRename = false;
+                                    _contextMenuNodeId = null;
                                     ImGui.CloseCurrentPopup();
                                 }
 
@@ -576,7 +618,7 @@ namespace Glamaholic.Ui {
             ImGui.SameLine();
             if (Util.IconButton(FontAwesomeIcon.FolderPlus, tooltip: "New Folder")) {
                 ImGui.OpenPopup("new-folder-popup");
-                _newFolderName = string.Empty;
+                _newFolderNameInput = string.Empty;
             }
 
             // caitlyn: intention was to have right-aligned expand/collapse but it's a PITA with ImGui
@@ -604,11 +646,11 @@ namespace Glamaholic.Ui {
                 //    }
                 //}
 
-                ImGui.InputText("##new-folder-name", ref _newFolderName, 128);
+                ImGui.InputText("##new-folder-name", ref _newFolderNameInput, 128);
 
-                if (ImGui.Button("Create") && !string.IsNullOrWhiteSpace(_newFolderName)) {
+                if (ImGui.Button("Create") && !string.IsNullOrWhiteSpace(_newFolderNameInput)) {
                     this.Ui.Plugin.Config.Plates.Insert(0, new FolderNode {
-                        Name = _newFolderName.Trim(),
+                        Name = _newFolderNameInput.Trim(),
                         Children = new List<TreeNode>()
                     });
                     this.Ui.Plugin.SaveConfig();
