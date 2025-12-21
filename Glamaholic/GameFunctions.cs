@@ -110,30 +110,26 @@ namespace Glamaholic {
         internal static unsafe Dictionary<PlateSlot, SavedGlamourItem>? CurrentPlate {
             get {
                 var agent = MiragePlateAgent;
-                if (agent == null) {
+                if (agent == null || agent->Data == null) {
                     return null;
                 }
 
-                var data = *(AgentMiragePrismMiragePlateData**) ((nint) agent + 0x28);
-                if (data == null)
-                    return null;
-
                 var plate = new Dictionary<PlateSlot, SavedGlamourItem>();
                 foreach (var slot in Enum.GetValues<PlateSlot>()) {
-                    ref var item = ref data->Items[(int) slot];
+                    ref var item = ref agent->Data->CurrentItems[(int) slot];
 
                     if (item.ItemId == 0)
                         continue;
 
                     var stain1 =
-                        item.PreviewStain1 != 0
-                            ? item.PreviewStain1
-                            : item.Stain1;
+                        item.PendingStainIds[0] != 0
+                            ? item.PendingStainIds[0]
+                            : item.StainIds[0];
 
                     var stain2 =
-                        item.PreviewStain2 != 0
-                            ? item.PreviewStain2
-                            : item.Stain2;
+                         item.PendingStainIds[1] != 0
+                            ? item.PendingStainIds[1]
+                            : item.StainIds[1];
 
                     plate[slot] = new SavedGlamourItem {
                         ItemId = item.ItemId,
@@ -163,7 +159,7 @@ namespace Glamaholic {
                 return;
             }
 
-            var data = *(AgentMiragePrismMiragePlateData**) ((nint) agent + 0x28);
+            var data = agent->Data;
             Plugin.LogTroubleshooting($"AgentMiragePrismMiragePlateData*: {(nint) data:X16}");
 
             if (data == null)
@@ -212,6 +208,7 @@ namespace Glamaholic {
 
                 var source = ItemSource.PrismBox;
 
+                // source idx, item id, stain1, stain2
                 var info = (-1, 0u, (byte) 0, (byte) 0);
 
                 Plugin.LogTroubleshooting($"Searching for {slot} {item.ItemId} ({item.Stain1}, {item.Stain2})");
@@ -219,8 +216,6 @@ namespace Glamaholic {
                 // find an item in the dresser that matches
                 var matchingIds = dresser.FindAll(mirage => (mirage.ItemId % Util.ItemModifierMod) == item.ItemId);
                 Plugin.LogTroubleshooting($"Dresser has {matchingIds.Count} items matching {item.ItemId}");
-
-
 
                 if (matchingIds.Count == 0) {
                     int cabinetId = GetCabinetItemId(&UIState.Instance()->Cabinet, item.ItemId);
@@ -239,7 +234,7 @@ namespace Glamaholic {
 
                     bool matchWithStains = idx != -1;
 
-                    if (idx == -1)
+                    if (idx == -1) // no match with stains, take first
                         idx = 0;
 
                     var mirage = matchingIds[idx];
@@ -251,6 +246,19 @@ namespace Glamaholic {
                 if (info.Item1 == -1) {
                     Plugin.LogTroubleshooting($"Item {item.ItemId} could not be found, skipping!");
                     continue;
+                }
+
+                // never attempt to clear stains on invalid items
+                // this can happen if CS offsets are wrong
+                int numStainSlots = DataCache.GetNumStainSlots(info.Item2);
+                if (numStainSlots == 0) {
+                    info.Item3 = 0;
+                    item.Stain1 = 0;
+                }
+
+                if (numStainSlots != 2) {
+                    info.Item4 = 0;
+                    item.Stain2 = 0;
                 }
 
                 Plugin.LogTroubleshooting($"SetGlamourPlateItemSlot({source}, {info.Item1}, {info.Item2}, {info.Item3}, {info.Item4})");
@@ -272,8 +280,11 @@ namespace Glamaholic {
 
                     // item loading for plates is deferred as of patch 7.1
                     // so we must set the flags ourselves in order to activate the second dye slot immediately
+                    if (item.Stain1 != 0)
+                        data->CurrentItems[(int) slot].Flags |= ItemFlag.HasStain0;
+
                     if (item.Stain2 != 0)
-                        data->Items[(int) slot].Flags = 0x20;
+                        data->CurrentItems[(int) slot].Flags |= ItemFlag.HasStain1;
 
                     this.ApplyStains(slot, item, usedStains);
 
