@@ -1,6 +1,7 @@
-﻿using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+﻿using Dalamud.Bindings.ImGui;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using Dalamud.Bindings.ImGui;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -9,6 +10,10 @@ using System.Xml.Linq;
 namespace Glamaholic.Ui.Helpers {
     internal class TryOnHelper {
         private const string PlateName = "Fitting Room";
+
+        // see file footer for information about these offsets
+        private const int TryOnToggleOffset = 0x366; // 870
+        private const int TryOnItemsOffset = 0x370;  // 880
 
         private PluginUi Ui { get; }
         private string _nameInput = PlateName;
@@ -68,10 +73,8 @@ namespace Glamaholic.Ui.Helpers {
         }
 
         private static unsafe Dictionary<PlateSlot, SavedGlamourItem> GetTryOnItems() {
-            // see file footer for information about these offsets
-
             var agent = AgentTryon.Instance();
-            var firstItem = (nint) agent + 0x370;
+            var firstItem = (nint) agent + TryOnItemsOffset;
 
             var items = new Dictionary<PlateSlot, SavedGlamourItem>();
 
@@ -106,6 +109,32 @@ namespace Glamaholic.Ui.Helpers {
             }
 
             return items;
+        }
+
+        public unsafe void TryOnPlate(SavedPlate plate) {
+            void SetTryOnSave(bool save) {
+                var tryOnAgent = AgentTryon.Instance();
+                if (tryOnAgent != null)
+                    *(byte*) ((nint) tryOnAgent + TryOnToggleOffset) = (byte) (save ? 1 : 0);
+            }
+
+            SetTryOnSave(false);
+            foreach (var slot in Enum.GetValues<PlateSlot>()) {
+                if (!plate.Items.TryGetValue(slot, out var item) || item.ItemId == 0) {
+                    if (plate.FillWithNewEmperor) {
+                        uint emperor = Util.GetEmperorItemForSlot(slot);
+                        if (emperor != 0) {
+                            this.Ui.Plugin.Functions.TryOn(emperor, 0, 0);
+                            SetTryOnSave(true);
+                        }
+                    }
+
+                    continue;
+                }
+
+                this.Ui.Plugin.Functions.TryOn(item.ItemId, item.Stain1, item.Stain2);
+                SetTryOnSave(true);
+            }
         }
 
         [StructLayout(LayoutKind.Explicit, Size = 28)]
@@ -174,3 +203,48 @@ You should find a block which iterates the item array:
          sub_140A9F0E0(a1);
     }
 */
+
+/*
+AgentTryOn "Save/Delete Outfit"
+
+The script @ IDA/update.py should be used first. If the script is no longer working, then the information below can be used to update the toggle offset.
+
+Client::UI::Agent::AgentTryon_ReceiveEvent
+--
+case 0x11u:
+   v38 = 0;
+   if ( *(a1 + 862) ) // <-- cmp [rbx+35Eh], bpl (862 is offset)
+   {
+     v49 = *(a1 + 16);
+     v50 = (*(*v49 + 48LL))(v49, *v49, &_ImageBase);
+     AddonText = Client::UI::Misc::RaptureTextModule_GetAddonText(v50, 0x96Eu);
+     v52 = (*(*v49 + 64LL))(v49);
+     *(a1 + 852) = Client::UI::RaptureAtkModule_OpenYesNo(
+                     v52,
+                     AddonText,
+                     qword_142623A18,
+                     qword_142623A20,
+                     a1,
+                     2LL,
+                     0,
+                     *(a1 + 32),
+                     4,
+                     0LL,
+                     0LL,
+                     0,
+                     0LL,
+                     0,
+                     1u,
+                     0,
+                     0,
+                     0,
+                     -1,
+                     0,
+                     0,
+                     0);
+   }
+   else
+   {
+     *(a1 + 862) = 1; // <-- (862 is offset)
+   }
+ */

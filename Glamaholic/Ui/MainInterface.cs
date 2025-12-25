@@ -288,7 +288,7 @@ namespace Glamaholic.Ui {
                         this.SwitchPlate(id, true);
                         break;
                     case ECImportTarget.TryOn:
-                        this.Ui.TryOnPlate(import);
+                        this.Ui.TryOnHelper.TryOnPlate(import);
                         break;
                     case ECImportTarget.TryOnGlamourer:
                         Interop.Glamourer.TryOn(playerIndex, import);
@@ -1048,7 +1048,7 @@ namespace Glamaholic.Ui {
 
             ImGui.TableNextColumn();
             if (Util.IconButton(FontAwesomeIcon.Search, tooltip: "Try on")) {
-                this.Ui.TryOnPlate(plate);
+                this.Ui.TryOnHelper.TryOnPlate(plate);
             }
 
             ImGui.TableNextColumn();
