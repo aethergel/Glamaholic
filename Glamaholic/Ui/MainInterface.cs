@@ -1597,9 +1597,17 @@ namespace Glamaholic.Ui {
                         ImGui.PopStyleColor();
 
                         foreach (var change in entry.Changes) {
+                            int indent = change.TakeWhile(c => c == '-').Count();
+                            string formatted = change.Substring(indent);
+                            for (int i = 0; i < indent; i++)
+                                ImGui.Indent();
+                            
                             ImGui.Bullet();
                             ImGui.SameLine();
-                            Util.TextUnformattedWrapped(change);
+                            Util.TextUnformattedWrapped(formatted);
+                            
+                            for (int i = 0; i < indent; i++)
+                                ImGui.Unindent();
                         }
 
                         ImGui.NewLine();

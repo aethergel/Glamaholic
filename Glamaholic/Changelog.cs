@@ -12,6 +12,13 @@ namespace Glamaholic {
                 "Plates and folders can now be dragged and reordered manually, and automatic sorting has been removed.",
                 "Improved third-party plugin support.",
             ]),
+            
+            new ChangelogEntry(new Version(1, 13, 0, 0), [
+                "Valuable dyes are now factored into the item selection process when applying plates",
+                "-Previously, the selection process was all or nothing. It will now attempt to find a match with a valuable dye, or an item with any matching dye first",
+                "Dyes on items already in the current plate will no longer be ovewritten and waste a dye",
+                "Plates should now always fully apply and refresh on first try",
+            ]),
         ];
 
         /// <summary>
