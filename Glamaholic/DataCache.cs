@@ -2,6 +2,7 @@
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 
@@ -23,5 +24,7 @@ namespace Glamaholic {
 
         public static int GetNumStainSlots(uint itemId) =>
             Service.DataManager.GetExcelSheet<Item>(ClientLanguage.English)!.GetRowOrDefault(itemId)?.DyeCount ?? 0;
+
+        public static HashSet<byte> ValuableStains { get; } = [101, 102, 103]; // Pure White, Jet Black, Pastel Pink
     }
 }

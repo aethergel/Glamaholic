@@ -1,6 +1,7 @@
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Game.Text.SeStringHandling.Payloads;
+using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -14,7 +15,7 @@ using System.Linq;
 using static FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentMiragePrismMiragePlateData;
 
 namespace Glamaholic {
-    internal class GameFunctions : IDisposable {
+    internal unsafe class GameFunctions : IDisposable {
         #region Dynamic
         private static class FunctionDelegates {
             internal unsafe delegate int GetCabinetItemIdDelegate(Cabinet* _this, uint baseItemId);
@@ -40,19 +41,44 @@ namespace Glamaholic {
         private static List<PrismBoxCachedItem> _cachedDresserItems = [];
         private static int _dresserItemSlotsUsed = 0;
 
+        private SavedPlate _retryLoadPlate = null;
+        private int _retryLoadPlateCount = 0;
+        
+        private Hook<AgentMiragePrismMiragePlate.Delegates.SetSelectedItemStains> _setSelectedItemStainsHook;
+
         internal GameFunctions(Plugin plugin) {
             this.Plugin = plugin;
             Service.GameInteropProvider.InitializeFromAttributes(this);
 
             Service.ChatGui.ChatMessage += this.OnChat;
             Service.Framework.Update += OnFrameworkUpdate;
+
+            _setSelectedItemStainsHook = Service.GameInteropProvider
+                .HookFromAddress<AgentMiragePrismMiragePlate.Delegates.SetSelectedItemStains>(
+                    AgentMiragePrismMiragePlate.MemberFunctionPointers.SetSelectedItemStains,
+                    SetSelectedItemStainsHook);
+            //_setSelectedItemStainsHook.Enable();
         }
 
         public void Dispose() {
             Service.ChatGui.ChatMessage -= this.OnChat;
             Service.Framework.Update -= OnFrameworkUpdate;
+            _setSelectedItemStainsHook.Disable();
+            _setSelectedItemStainsHook.Dispose();
         }
 
+        private unsafe void SetSelectedItemStainsHook(
+            AgentMiragePrismMiragePlate* self,
+            InventoryItem* item0,
+            byte pendingStain0Id,
+            uint pendingStain0ItemId,
+            InventoryItem* item1,
+            byte pendingStain1Id,
+            uint pendingStain1ItemId) {
+            Service.Log.Debug($"SetSelectedItemStains({(nint)item0}, {pendingStain0Id}, {pendingStain0ItemId}, {(nint)item1}, {pendingStain1Id}, {pendingStain1ItemId})");
+            _setSelectedItemStainsHook.Original(self, item0, pendingStain0Id, pendingStain0ItemId, item1, pendingStain1Id, pendingStain1ItemId);
+        }
+        
         private void OnChat(XivChatType type, int timestamp, ref SeString sender, ref SeString message, ref bool isHandled) {
             if (this._filterIds.Count == 0 || type != XivChatType.SystemMessage) {
                 return;
@@ -71,9 +97,19 @@ namespace Glamaholic {
             if (!agent->IsAddonReady() || agent->Data == null)
                 return;
 
-            // TODO move back to agent-Data->UsedSlots once CS has updated
-            //if (agent->Data->UsedSlots == _dresserItemSlotsUsed)
-            //    return;
+            if (agent->Data->UsedSlots == _dresserItemSlotsUsed) {
+                if (_retryLoadPlate != null) {
+                    Plugin.LogTroubleshooting("Retrying LoadPlate()");
+                    LoadPlate(_retryLoadPlate);
+                    if (_retryLoadPlateCount >= 5) {
+                        Plugin.LogTroubleshooting("Max retry count reached, giving up on loading plate");
+                        _retryLoadPlate = null;
+                        _retryLoadPlateCount = 0;
+                    }
+                }
+
+                return;
+            }
 
             int usedSlots = agent->Data->UsedSlots;
 
@@ -93,6 +129,16 @@ namespace Glamaholic {
             }
 
             _dresserItemSlotsUsed = agent->Data->UsedSlots;
+            
+            if (_retryLoadPlate != null) {
+                Plugin.LogTroubleshooting("Retrying LoadPlate()");
+                LoadPlate(_retryLoadPlate);
+                if (_retryLoadPlateCount >= 5) {
+                    Plugin.LogTroubleshooting("Max retry count reached, giving up on loading plate");
+                    _retryLoadPlate = null;
+                    _retryLoadPlateCount = 0;
+                }
+            }
         }
 
         private static unsafe AgentMiragePrismMiragePlate* MiragePlateAgent => AgentMiragePrismMiragePlate.Instance();
@@ -160,143 +206,268 @@ namespace Glamaholic {
             }
 
             var data = agent->Data;
-            Plugin.LogTroubleshooting($"AgentMiragePrismMiragePlateData*: {(nint) data:X16}");
-
             if (data == null)
                 return;
-
-            var dresser = DresserContents;
-            var current = CurrentPlate;
+            
             var usedStains = new Dictionary<(uint, uint), uint>();
+
+            bool needsRetry = false;
 
             var initialSlot = data->SelectedItemIndex;
             foreach (var slot in Enum.GetValues<PlateSlot>()) {
-                if (!plate.Items.TryGetValue(slot, out var item)) {
+                if (!plate.Items.TryGetValue(slot, out var wantedItem)) {
                     if (!plate.FillWithNewEmperor)
                         continue;
 
                     uint emperorId = Util.GetEmperorItemForSlot(slot);
                     if (emperorId != 0)
-                        item = new SavedGlamourItem { ItemId = emperorId };
+                        wantedItem = new SavedGlamourItem { ItemId = emperorId };
                     else
                         continue;
                 }
 
-                if (current != null && current.TryGetValue(slot, out var currentItem)) {
-                    if (currentItem.ItemId == item.ItemId
-                        && currentItem.Stain1 == item.Stain1
-                        && currentItem.Stain2 == item.Stain2) {
-                        // ignore already-correct items
-                        Plugin.LogTroubleshooting($"Skipping {slot}: expected item state is already in plate");
-                        continue;
-                    }
-                }
-
                 data->SelectedItemIndex = (uint) slot;
-                if (item.ItemId == 0) {
-                    Plugin.LogTroubleshooting($"Clearing {slot}: slot is explicitly empty");
-
-                    uint previousContextSlot = data->ContextMenuItemIndex;
-                    data->ContextMenuItemIndex = (uint) slot;
-
-                    AtkValue rv;
-                    agent->ReceiveEvent(&rv, null, 0, 1); // "Remove Item Image from Plate"
-
-                    data->ContextMenuItemIndex = previousContextSlot;
+                
+                SourcedGlamourItem? bestItemN = FindBestItemSource(agent, slot, wantedItem);
+                if (bestItemN == null)
                     continue;
+
+                var bestItem = bestItemN.Value;
+                
+                if (bestItem.Source != SourcedGlamourItem.SourceType.Plate) {
+                    ItemSource source = 
+                        bestItem.Source == SourcedGlamourItem.SourceType.PrismBox
+                            ? ItemSource.PrismBox
+                            : ItemSource.Cabinet;
+                
+                    Plugin.LogTroubleshooting($"SetGlamourPlateItemSlot for source {bestItem.Source}: ({source}, {bestItem.SlotOrId}, {bestItem.ItemId}, {bestItem.Stain1}, {bestItem.Stain2})");
+                    AgentMiragePrismMiragePlate.Instance()->SetSelectedItemData(
+                        source,
+                        bestItem.SlotOrId,
+                        bestItem.ItemId,
+                        bestItem.Stain1,
+                        bestItem.Stain2);
+
+                    needsRetry |= agent->Data->CurrentItems[(int) slot].ItemId != bestItem.ItemId;
+                    needsRetry |= agent->Data->CurrentItems[(int) slot].Source != bestItem.SourceAsItemSource;
                 }
-
-                var source = ItemSource.PrismBox;
-
-                // source idx, item id, stain1, stain2
-                var info = (-1, 0u, (byte) 0, (byte) 0);
-
-                Plugin.LogTroubleshooting($"Searching for {slot} {item.ItemId} ({item.Stain1}, {item.Stain2})");
-
-                // find an item in the dresser that matches
-                var matchingIds = dresser.FindAll(mirage => (mirage.ItemId % Util.ItemModifierMod) == item.ItemId);
-                Plugin.LogTroubleshooting($"Dresser has {matchingIds.Count} items matching {item.ItemId}");
-
-                if (matchingIds.Count == 0) {
-                    int cabinetId = GetCabinetItemId(&UIState.Instance()->Cabinet, item.ItemId);
-                    if (cabinetId != -1 && this.Armoire->IsItemInCabinet(cabinetId)) {
-                        source = ItemSource.Cabinet;
-
-                        info = (cabinetId, item.ItemId, 0, 0);
-
-                        Plugin.LogTroubleshooting($"Item {item.ItemId} found in armoire with cabinet id {cabinetId}");
-                    }
-                } else {
-                    // try to find an item with matching stains
-                    var idx = matchingIds.FindIndex(mirage =>
-                        mirage.Stain1 == item.Stain1
-                        && mirage.Stain2 == item.Stain2);
-
-                    bool matchWithStains = idx != -1;
-
-                    if (idx == -1) // no match with stains, take first
-                        idx = 0;
-
-                    var mirage = matchingIds[idx];
-                    info = ((int) mirage.Slot, mirage.ItemId, mirage.Stain1, mirage.Stain2);
-
-                    Plugin.LogTroubleshooting($"Item {item.ItemId} found in dresser at slot {mirage.Slot} with stains {mirage.Stain1}, {mirage.Stain2} ({(matchWithStains ? "matched" : "mismatched")})");
-                }
-
-                if (info.Item1 == -1) {
-                    Plugin.LogTroubleshooting($"Item {item.ItemId} could not be found, skipping!");
+                
+                if (bestItem.Stain1 == wantedItem.Stain1 && bestItem.Stain2 == wantedItem.Stain2)
                     continue;
-                }
 
-                // never attempt to clear stains on invalid items
-                // this can happen if CS offsets are wrong
-                int numStainSlots = DataCache.GetNumStainSlots(info.Item2);
-                if (numStainSlots == 0) {
-                    info.Item3 = 0;
-                    item.Stain1 = 0;
-                }
+                uint previousContextSlot = data->ContextMenuItemIndex;
+                data->ContextMenuItemIndex = (uint) slot;
+                
+                Plugin.LogTroubleshooting($"Applying stains to {slot}: {wantedItem.Stain1}, {wantedItem.Stain2}");
+                    
+                // fixes some item data being loaded late in patch 7.1 and later
+                if (wantedItem.Stain1 != 0)
+                    data->CurrentItems[(int) slot].Flags |= ItemFlag.HasStain0;
 
-                if (numStainSlots != 2) {
-                    info.Item4 = 0;
-                    item.Stain2 = 0;
-                }
+                if (wantedItem.Stain2 != 0)
+                    data->CurrentItems[(int) slot].Flags |= ItemFlag.HasStain1;
 
-                Plugin.LogTroubleshooting($"SetGlamourPlateItemSlot({source}, {info.Item1}, {info.Item2}, {info.Item3}, {info.Item4})");
-                AgentMiragePrismMiragePlate.Instance()->SetSelectedItemData(
-                    source,
-                    (uint) info.Item1, // slot or cabinet id
-                    info.Item2, // item id
-                    info.Item3, // stain 1
-                    info.Item4  // stain 2
-                );
-
-                // TODO
-                if (item.Stain1 != info.Item3 || item.Stain2 != info.Item4) {
-                    // mirage in dresser did not have stain for this item, so apply it
-                    Plugin.LogTroubleshooting($"Applying stains to {slot}: {item.Stain1}, {item.Stain2}");
-
-                    uint previousContextSlot = data->ContextMenuItemIndex;
-                    data->ContextMenuItemIndex = (uint) slot;
-
-                    // item loading for plates is deferred as of patch 7.1
-                    // so we must set the flags ourselves in order to activate the second dye slot immediately
-                    if (item.Stain1 != 0)
-                        data->CurrentItems[(int) slot].Flags |= ItemFlag.HasStain0;
-
-                    if (item.Stain2 != 0)
-                        data->CurrentItems[(int) slot].Flags |= ItemFlag.HasStain1;
-
-                    this.ApplyStains(slot, item, usedStains);
-
-                    data->ContextMenuItemIndex = previousContextSlot;
-                }
+                ApplyStains(slot, wantedItem, [bestItem.Stain1, bestItem.Stain2], usedStains);
+                
+                data->ContextMenuItemIndex = previousContextSlot;
             }
 
             // restore initial slot, since changing this does not update the ui
             data->SelectedItemIndex = initialSlot;
             data->HasChanges = true;
 
+            if (needsRetry) {
+                _retryLoadPlate = plate;
+                _retryLoadPlateCount += 1;
+                
+                Plugin.LogTroubleshooting("Could not fully load plate, retrying next tick");
+            } else {
+                _retryLoadPlate = null;
+                _retryLoadPlateCount = 0;
+            }
+
             Plugin.LogTroubleshooting("End LoadPlate()");
+        }
+
+        internal SourcedGlamourItem? FindBestItemSource(AgentMiragePrismMiragePlate* agent, PlateSlot slot, SavedGlamourItem wantedItem) {
+            SavedGlamourItem? plateItem = GetCurrentPlateItem(slot);
+            if (plateItem != null) {
+                if (wantedItem.ItemId == 0) {
+                    Plugin.LogTroubleshooting($"Clearing {slot}: slot is explicitly empty");
+
+                    uint previousContextSlot = agent->Data->ContextMenuItemIndex;
+                    agent->Data->ContextMenuItemIndex = (uint) slot;
+
+                    AtkValue rv;
+                    agent->ReceiveEvent(&rv, null, 0, 1); // "Remove Item Image from Plate"
+
+                    agent->Data->ContextMenuItemIndex = previousContextSlot;
+                    return null;
+                }
+
+                if (plateItem.ItemId != wantedItem.ItemId) {
+                    plateItem = null; // remove from consideration
+                } else if (plateItem.Stain1 == wantedItem.Stain1 &&
+                           plateItem.Stain2 == wantedItem.Stain2) {
+                    Plugin.LogTroubleshooting($"Skipping {slot}: already has matching item {wantedItem.ItemId} ({wantedItem.Stain1}, {wantedItem.Stain2})");
+                    return null;
+                }
+            }
+
+            PrismBoxCachedItem? prismBoxItem = FindBestPrismBoxMatch(wantedItem);
+            if (prismBoxItem != null
+                && prismBoxItem.Value.ItemId == wantedItem.ItemId
+                && prismBoxItem.Value.Stain1 == wantedItem.Stain1
+                && prismBoxItem.Value.Stain2 == wantedItem.Stain2)
+            {
+                Plugin.LogTroubleshooting($"Found exact match in dresser for {slot}: {wantedItem.ItemId} ({wantedItem.Stain1}, {wantedItem.Stain2})");
+                AgentMiragePrismMiragePlate.Instance()->SetSelectedItemData(ItemSource.PrismBox, (uint) prismBoxItem.Value.Slot, prismBoxItem.Value.ItemId, prismBoxItem.Value.Stain1, prismBoxItem.Value.Stain2);
+                return null;
+            }
+
+            int cabinetId = GetCabinetItemId(Armoire, wantedItem.ItemId);
+            bool isInCabinet = cabinetId != -1 && Armoire->IsItemInCabinet(cabinetId);
+            
+            if (plateItem == null && prismBoxItem == null && !isInCabinet) {
+                Plugin.LogTroubleshooting($"Skipping {slot}: could not find item {wantedItem.ItemId} ({wantedItem.Stain1}, {wantedItem.Stain2})");
+                return null;
+            }
+            
+            Plugin.LogTroubleshooting(
+                $"Evaluating options for {slot}: " +
+                (plateItem != null ? "plate " : "") +
+                (prismBoxItem != null ? "dresser " : "") +
+                (isInCabinet ? "armoire " : "")
+            );
+            
+            SourcedGlamourItem bestItem = PickBestItem(plateItem, prismBoxItem, isInCabinet, wantedItem);
+            Plugin.LogTroubleshooting($"Picked best item for {slot}: {bestItem}");
+
+            // never attempt to clear stains on invalid items
+            // this can happen if CS offsets are wrong
+            int numStainSlots = DataCache.GetNumStainSlots(bestItem.ItemId);
+            if (numStainSlots == 0) {
+                bestItem.Stain1 = 0;
+                wantedItem.Stain1 = 0;
+            }
+
+            if (numStainSlots != 2) {
+                bestItem.Stain2 = 0;
+                wantedItem.Stain2 = 0;
+            }
+
+            return bestItem;
+        }
+        
+        internal SavedGlamourItem? GetCurrentPlateItem(PlateSlot slot) =>
+            CurrentPlate == null ? null : CurrentPlate!.GetValueOrDefault(slot, null);
+            
+        internal PrismBoxCachedItem? FindBestPrismBoxMatch(SavedGlamourItem item) {
+            var dresser = DresserContents;
+
+            var matches = dresser.FindAll(i => (i.ItemId % Util.ItemModifierMod) == item.ItemId);
+            if (matches.Count == 0)
+                return null;
+            
+            var exact = matches.FirstOrNull(i => i.Stain1 == item.Stain1 && i.Stain2 == item.Stain2);
+            if (exact != null)
+                return exact;
+
+            var valuableStains = DataCache.ValuableStains;
+            bool itemHasValuableStain = valuableStains.Contains(item.Stain1) || valuableStains.Contains(item.Stain2);
+            
+            int bestScore = -1;
+            int bestIdx = -1;
+            
+            for (int i = 0; i < matches.Count; i++) {
+                var match = matches[i];
+                int score = 0;
+                
+                if (itemHasValuableStain) {
+                    if ((item.Stain1 != 0 && valuableStains.Contains(item.Stain1) && match.Stain1 == item.Stain1) ||
+                        (item.Stain2 != 0 && valuableStains.Contains(item.Stain2) && match.Stain2 == item.Stain2)) {
+                        score = 2;
+                    }
+                }
+                
+                if (score < 2) {
+                    if ((item.Stain1 != 0 && match.Stain1 == item.Stain1) ||
+                        (item.Stain2 != 0 && match.Stain2 == item.Stain2)) {
+                        score = 1;
+                    }
+                }
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            
+            return bestIdx != -1 ? matches[bestIdx] : matches[0];
+        }
+
+        internal SourcedGlamourItem PickBestItem(SavedGlamourItem? plateItem, PrismBoxCachedItem? prismBoxItem,
+            bool isInCabinet, SavedGlamourItem wantedItem) {
+            var valuableStains = DataCache.ValuableStains;
+            
+            int bestScore = -1;
+            var result = new SourcedGlamourItem {
+                Source = SourcedGlamourItem.SourceType.None,
+                ItemId = 0,
+                Stain1 = 0,
+                Stain2 = 0,
+            };
+            
+            if (plateItem != null) {
+                bool firstStainMatch = wantedItem.Stain1 != 0 && plateItem.Stain1 == wantedItem.Stain1;
+                bool secondStainMatch = wantedItem.Stain2 != 0 && plateItem.Stain2 == wantedItem.Stain2;
+                bool firstStainValuable = valuableStains.Contains(wantedItem.Stain1) && firstStainMatch;
+                bool secondStainValuable = valuableStains.Contains(wantedItem.Stain2) && secondStainMatch;
+                
+                int score = 0;
+                if (firstStainValuable || secondStainValuable)
+                    score = 2;
+                else if (firstStainMatch || secondStainMatch)
+                    score = 1;
+
+                bestScore = score;
+                result.Source = SourcedGlamourItem.SourceType.Plate;
+                result.ItemId = plateItem.ItemId;
+                result.Stain1 = plateItem.Stain1;
+                result.Stain2 = plateItem.Stain2;
+            }
+            
+            if (prismBoxItem != null) {
+                bool firstStainMatch = wantedItem.Stain1 != 0 && prismBoxItem.Value.Stain1 == wantedItem.Stain1;
+                bool secondStainMatch = wantedItem.Stain2 != 0 && prismBoxItem.Value.Stain2 == wantedItem.Stain2;
+                bool firstStainValuable = valuableStains.Contains(wantedItem.Stain1) && firstStainMatch;
+                bool secondStainValuable = valuableStains.Contains(wantedItem.Stain2) && secondStainMatch;
+                
+                int score = 0;
+                if (firstStainValuable || secondStainValuable)
+                    score = 2;
+                else if (firstStainMatch || secondStainMatch)
+                    score = 1;
+
+                if (score > bestScore) {
+                    bestScore = score;
+                    result.Source = SourcedGlamourItem.SourceType.PrismBox;
+                    result.SlotOrId = (uint) prismBoxItem.Value.Slot;
+                    result.ItemId = prismBoxItem.Value.ItemId;
+                    result.Stain1 = prismBoxItem.Value.Stain1;
+                    result.Stain2 = prismBoxItem.Value.Stain2;
+                }
+            }
+            
+            if (isInCabinet && bestScore < 0) {
+                result.Source = SourcedGlamourItem.SourceType.Cabinet;
+                result.SlotOrId = (uint) GetCabinetItemId(Armoire, wantedItem.ItemId);
+                result.ItemId = wantedItem.ItemId;
+                result.Stain1 = 0;
+                result.Stain2 = 0;
+            }
+            
+            return result;
         }
 
         private static readonly InventoryType[] PlayerInventories = {
@@ -360,9 +531,17 @@ namespace Glamaholic {
             return item;
         }
 
-        private unsafe void ApplyStains(PlateSlot slot, SavedGlamourItem item, Dictionary<(uint, uint), uint> usedStains) {
+        private unsafe void ApplyStains(PlateSlot slot, SavedGlamourItem item, byte[] currentItemStains, Dictionary<(uint, uint), uint> usedStains) {
             var stain1Item = SelectStainItem(item.Stain1, usedStains, out var stain1ItemId);
             var stain2Item = SelectStainItem(item.Stain2, usedStains, out var stain2ItemId);
+
+            Plugin.LogTroubleshooting($"Item has stains: {currentItemStains[0]}, {currentItemStains[1]}; we need stains: {item.Stain1}, {item.Stain2}");
+            // if the stain slot already matches, we have to keep the item id, but pass in null for the InventoryItem
+            if (item.Stain1 == currentItemStains[0])
+                stain1Item = null;
+            
+            if (item.Stain2 == currentItemStains[1])
+                stain2Item = null;
 
             Plugin.LogTroubleshooting($"SetGlamourPlateSlotStains({(stain1Item != null ? stain1Item->Slot : 0)}, {item.Stain1}, {stain1ItemId}, {(stain2Item != null ? stain2Item->Slot : 0)}, {item.Stain2}, {stain2ItemId})");
             AgentMiragePrismMiragePlate.Instance()->SetSelectedItemStains(stain1Item, item.Stain1, stain1ItemId,
@@ -384,6 +563,35 @@ namespace Glamaholic {
             public uint IconId { get; set; }
             public byte Stain1 { get; set; }
             public byte Stain2 { get; set; }
+        }
+
+        internal struct SourcedGlamourItem {
+            public SourceType Source;
+            public uint SlotOrId;
+            public uint ItemId;
+            public byte Stain1;
+            public byte Stain2;
+
+            /// <inheritdoc />
+            public override string ToString() {
+                return $"SourcedGlamourItem(Source={Source}, SlotOrId={SlotOrId}, ItemId={ItemId}, Stain1={Stain1}, Stain2={Stain2})";
+            }
+
+            public enum SourceType {
+                None,
+                Plate,
+                PrismBox,
+                Cabinet
+            }
+            
+            public ItemSource SourceAsItemSource =>
+                Source == SourceType.Plate
+                    ? ItemSource.None
+                    : (Source == SourceType.PrismBox
+                        ? ItemSource.PrismBox
+                        : (Source == SourceType.Cabinet
+                            ? ItemSource.Cabinet
+                            : ItemSource.None));
         }
     }
 }

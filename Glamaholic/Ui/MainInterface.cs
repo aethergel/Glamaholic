@@ -1042,7 +1042,7 @@ namespace Glamaholic.Ui {
                 if (!Util.IsEditingPlate(Service.GameGui)) {
                     this.AddTimedMessage("The in-game plate editor must be open.");
                 } else {
-                    this.Ui.Plugin.Functions.LoadPlate(plate);
+                    Service.Framework.RunOnFrameworkThread(() => this.Ui.Plugin.Functions.LoadPlate(plate));
                 }
             }
 
